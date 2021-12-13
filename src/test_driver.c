@@ -12,8 +12,9 @@ static bool startup_targum_lexer(void *const userdata, const char filename[stati
 	}
 	return targum_lexer_generate_tokens(lexer);
 }
+
 static bool shutdown_targum_lexer(void *const userdata, const char filename[static 1]) {
-	( void )filename;
+	( void )(filename);
 	struct TargumLexer *const restrict lexer = userdata;
 	targum_lexer_clear(lexer, true);
 	return true;
@@ -32,8 +33,8 @@ static uint32_t targum_lexer_token(void *const userdata, const size_t lookahead,
 }
 
 static const char *targum_lexer_cstr(void *const restrict userdata, const size_t lookahead, size_t *const restrict line, size_t *const restrict col) {
-	const struct TargumLexer *const lexer = userdata;
-	const struct TargumTokenInfo *const ti = targum_lexer_peek_token(lexer, lookahead);
+	const struct TargumLexer     *const lexer = userdata;
+	const struct TargumTokenInfo *const ti    = targum_lexer_peek_token(lexer, lookahead);
 	if( ti != NULL ) {
 		//printf("%s :: ti->tag - %s\n", __func__, ti->lexeme.cstr);
 		*line = ti->line;
@@ -44,25 +45,26 @@ static const char *targum_lexer_cstr(void *const restrict userdata, const size_t
 }
 
 static void targum_lexer_consume(void *const userdata, const size_t lookahead, const bool consumed) {
-	( void )lookahead;
+	( void )(lookahead);
 	struct TargumLexer *const lexer = userdata;
 	if( consumed ) {
 		targum_lexer_advance(lexer, true);
 	}
 }
 
-static void print_cst(struct HarbolTree *const tree, const size_t tabs, FILE *f) {
+static void print_cst(struct HarbolTree *const tree, const size_t tabs, FILE *const f) {
 	if( tree==NULL )
 		return;
 	
-	struct TargumCST *cst = ( struct TargumCST* )tree->data;
-	harbol_print_tree_tabs(tabs, f);
-	fprintf(f, "%s: %s\n", cst->tag != SIZE_MAX ? "token" : "rule", cst->parsed);
+	struct TargumCST *cst = ( struct TargumCST* )(tree->data);
+	_print_tabs(tabs, f);
+	fprintf(f, "%s :: '%s'\n", cst->tag != SIZE_MAX? "token" : "rule", cst->parsed);
 	for( size_t i=0; i < tree->kids.len; i++ ) {
 		struct HarbolTree **kid = harbol_array_get(&tree->kids, i, sizeof *kid);
 		print_cst(*kid, tabs + 1, f);
 	}
 }
+
 
 int main(const int argc, char *restrict argv[restrict static 1])
 {
@@ -102,7 +104,7 @@ int main(const int argc, char *restrict argv[restrict static 1])
 			if( val==NULL )
 				continue;
 			
-			targum_parser_define_token(&tparser, *iter, ( uint32_t ) *val);
+			targum_parser_define_token(&tparser, *iter, ( uint32_t )(*val));
 		}
 	}
 	struct HarbolTree *cst = targum_parser_run(&tparser);

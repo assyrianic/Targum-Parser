@@ -38,7 +38,7 @@ void test_harbol_lex(FILE *const debug_stream)
 	const char *c_hexs[] = {
 		"0X55", /// correct
 		"0X5fl", /// correct
-		"0x55LLU", /// correct
+		"0x5'5LLU", /// correct
 		"0X5full", /// correct
 		"0x0.3p10", /// correct
 		"0x1.2p3", /// correct
@@ -221,6 +221,7 @@ void test_harbol_lex(FILE *const debug_stream)
 	fputs("\nlex tools :: test Go binary.\n", debug_stream);
 	const char *go_binary[] = {
 		"0b11101", /// correct
+		"0b110_101", /// correct
 		"b1101010", /// bad
 		"0b10002", /// bad
 		"011101010", /// bad
@@ -235,11 +236,11 @@ void test_harbol_lex(FILE *const debug_stream)
 	
 	fputs("\nlex tools :: test C various numbers.\n", debug_stream);
 	const char *c_nums[] = {
-		"0X55", /// correct
+		"0X5'5", /// correct
 		"0X5fl", /// correct
 		"0x55LLU", /// correct
 		"0X5full", /// correct
-		"0X_CAFE_BABE", /// correct
+		"0X'CAFE'BABE", /// correct
 		"0x0.3p10", /// correct
 		"0x1.2p3", /// correct
 		"0x1p+1", /// correct
@@ -248,12 +249,12 @@ void test_harbol_lex(FILE *const debug_stream)
 		"0x3.3333333333334p-5", /// correct
 		"0x1.f", /// bad
 		"0553", /// correct
-		"0553ULL", /// correct
+		"05'53ULL", /// correct
 		"0553u", /// correct
 		"0553llu", /// correct
-		"0777", /// correct
+		"07'77", /// correct
 		"0553LUL", /// bad
-		"553", /// bad
+		"55'3", /// bad
 		"078", /// bad
 		".llu", /// bad
 	};

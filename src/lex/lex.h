@@ -10,6 +10,10 @@ extern "C" {
 #include "../str/str.h"
 #include <ctype.h>
 
+enum {
+	DigitSep_C  = '\'',
+	DigitSep_Go = '_'
+};
 
 HARBOL_EXPORT bool is_alphabetic(int32_t c);
 HARBOL_EXPORT bool is_possible_id(int32_t c);
@@ -20,6 +24,7 @@ HARBOL_EXPORT bool is_binary(int32_t c);
 HARBOL_EXPORT bool is_whitespace(int32_t c);
 
 HARBOL_EXPORT bool is_valid_unicode(int32_t u);
+HARBOL_EXPORT bool check_is_char(const char str[], size_t len, size_t idx, int32_t c);
 
 HARBOL_EXPORT size_t get_utf8_len(char c);
 
@@ -76,11 +81,11 @@ enum {
 	HarbolLexBadGylph,
 	HarbolLexHexMissingDigits,
 	HarbolLexHexNoDigitsB4Exp,
-	HarbolLexUnderscoreNearDot,
-	HarbolLexUnderscoreNearExp,
-	HarbolLexExtraUnderscores,
+	HarbolLexDigitSepNearDot,
+	HarbolLexDigitSepNearExp,
+	HarbolLexExtraDigitSeps,
 	HarbolLexHexFltNoExp,
-	HarbolLexUnderscoreMIADigits,
+	HarbolLexDigitSepMIADigits,
 	HarbolLexExtraFltDot,
 	HarbolLexExtraFltSuffix,
 	HarbolLexExtraExp,
@@ -92,7 +97,7 @@ enum {
 	HarbolLexBadHexChar,
 	HarbolLexBadUnicodeChar,
 	HarbolLexSuddenEoFStr,
-	HarbolLexUnderscoreNotSepDigits,
+	HarbolLexDigitSepNotSepDigits,
 };
 
 HARBOL_EXPORT NO_NULL int lex_c_style_hex(const char str[], const char **end, struct HarbolString *buf, bool *is_float);
@@ -116,8 +121,15 @@ HARBOL_EXPORT NO_NULL int lex_go_style_str(const char str[], const char **end, s
 HARBOL_EXPORT NO_NULL NONNULL_RET const char *lex_get_err(const int err_code);
 
 HARBOL_EXPORT NO_NULL bool lex_identifier(const char str[], const char **end, struct HarbolString *buf, bool checker(int32_t c));
+HARBOL_EXPORT NO_NULL bool lex_identifier_utf8(const char str[], const char **end, struct HarbolString *buf, bool checker(int32_t c));
 HARBOL_EXPORT NO_NULL bool lex_c_style_identifier(const char str[], const char **end, struct HarbolString *buf);
-HARBOL_EXPORT NO_NULL bool lex_until(const char str[], const char **end, struct HarbolString *buf, int control);
+HARBOL_EXPORT NO_NULL bool lex_until(const char str[], const char **end, struct HarbolString *buf, int32_t control);
+
+HARBOL_EXPORT NEVER_NULL(1) intmax_t lex_c_string_to_int(const struct HarbolString *buf, char **end);
+HARBOL_EXPORT NEVER_NULL(1) intmax_t lex_go_string_to_int(const struct HarbolString *buf, char **end);
+HARBOL_EXPORT NEVER_NULL(1) uintmax_t lex_c_string_to_uint(const struct HarbolString *buf, char **end);
+HARBOL_EXPORT NEVER_NULL(1) uintmax_t lex_go_string_to_uint(const struct HarbolString *buf, char **end);
+HARBOL_EXPORT NO_NULL floatmax_t lex_string_to_float(const struct HarbolString *buf);
 /********************************************************************/
 
 #ifdef __cplusplus

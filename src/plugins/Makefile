@@ -24,3 +24,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_plugins_test
+	$(RM) harbol_plugins_output.txt
+
+run_test:
+	./harbol_plugins_test

@@ -18,3 +18,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_mempool_test
+	$(RM) harbol_mempool_output.txt
+
+run_test:
+	./harbol_mempool_test

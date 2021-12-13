@@ -112,7 +112,7 @@ HARBOL_EXPORT bool harbol_bytebuffer_insert_cstr(struct HarbolByteBuf *const res
 	if( buf->len + cstr_len + 1 >= buf->cap && !_harbol_buffer_resize(buf, buf->len + cstr_len + 1) )
 		return false;
 	
-	strncpy(( char* )&buf->table[buf->len], cstr, cstr_len);
+	strcpy(( char* )(&buf->table[buf->len]), cstr);
 	buf->len += cstr_len;
 	buf->table[buf->len++] = 0;
 	return true;
@@ -176,7 +176,7 @@ HARBOL_EXPORT bool harbol_bytebuffer_insert_from_file(struct HarbolByteBuf *cons
 	
 	const size_t bytes_read = fread(&buf->table[buf->len], sizeof *buf->table, file_size, file);
 	buf->len += bytes_read;
-	return bytes_read==( size_t )file_size;
+	return bytes_read==( size_t )(file_size);
 }
 
 HARBOL_EXPORT bool harbol_bytebuffer_append(struct HarbolByteBuf *const bufA, const struct HarbolByteBuf *const bufB)

@@ -11,7 +11,7 @@ HARBOL_EXPORT struct HarbolRegion harbol_region_make(const size_t size)
 	if( size==0 )
 		return region;
 	
-	region.mem = ( uintptr_t )calloc(size, sizeof(uint8_t));
+	region.mem = ( uintptr_t )(calloc(size, sizeof(uint8_t)));
 	if( region.mem==NIL ) {
 		return region;
 	}
@@ -27,7 +27,7 @@ HARBOL_EXPORT struct HarbolRegion harbol_region_make_from_buffer(void *const res
 		return region;
 	
 	region.size = size;
-	region.mem = ( uintptr_t )buf;
+	region.mem = ( uintptr_t )(buf);
 	region.offs = region.mem + size;
 	return region;
 }
@@ -37,8 +37,8 @@ HARBOL_EXPORT void harbol_region_clear(struct HarbolRegion *const region)
 	if( region->mem==NIL )
 		return;
 	
-	free(( void* )region->mem);
-	*region = (struct HarbolRegion){0};
+	free(( void* )(region->mem));
+	*region = ( struct HarbolRegion ){0};
 }
 
 HARBOL_EXPORT void *harbol_region_alloc(struct HarbolRegion *const region, const size_t size)
@@ -51,7 +51,7 @@ HARBOL_EXPORT void *harbol_region_alloc(struct HarbolRegion *const region, const
 		return NULL;
 	
 	region->offs -= alloc_size;
-	return memset(( void* )region->offs, 0, alloc_size);
+	return memset(( void* )(region->offs), 0, alloc_size);
 }
 
 HARBOL_EXPORT size_t harbol_region_remaining(const struct HarbolRegion *const region)

@@ -1,9 +1,10 @@
 #include "map.h"
+#include <time.h>
 
 #ifdef OS_WINDOWS
 #	define HARBOL_LIB
 #endif
-
+static bool seeded;
 
 HARBOL_EXPORT struct HarbolMap *harbol_map_new(const size_t init_size) {
 	struct HarbolMap *map = calloc(1, sizeof *map);
@@ -37,18 +38,24 @@ HARBOL_EXPORT bool harbol_map_init(struct HarbolMap *const map, const size_t ini
 	}
 	map->cap = init_size;
 	map->len = 0;
+	
+	if( !seeded ) {
+		srand(time(NULL));
+		seeded = true;
+	}
+	map->seed = ( size_t )(rand());
 	return true;
 }
 
 HARBOL_EXPORT void harbol_map_clear(struct HarbolMap *const map) {
 	for( size_t i=0; i<map->len; i++ ) {
-		free(map->keys[i]); map->keys[i] = NULL;
+		free(map->keys[i]);  map->keys[i] = NULL;
 		free(map->datum[i]); map->datum[i] = NULL;
 	}
-	free(map->keys); map->keys = NULL;
+	free(map->keys);    map->keys = NULL;
 	free(map->keylens); map->keylens = NULL;
-	free(map->datum); map->datum = NULL;
-	free(map->hashes); map->hashes = NULL;
+	free(map->datum);   map->datum = NULL;
+	free(map->hashes);  map->hashes = NULL;
 	
 	for( size_t i=0; i<map->cap; i++ ) {
 		harbol_array_clear(&map->buckets[i]);
@@ -67,12 +74,12 @@ HARBOL_EXPORT void harbol_map_free(struct HarbolMap **const map_ref) {
 
 
 HARBOL_EXPORT bool harbol_map_has_key(const struct HarbolMap *const map, const void *const key, const size_t keylen) {
-	const size_t hash = array_hash(key, keylen);
+	const size_t hash = array_hash(key, keylen, map->seed);
 	const size_t index = hash & (map->cap - 1);
 	const struct HarbolArray *const bucket = &map->buckets[index];
 	for( size_t i=0; i<bucket->len; i++ ) {
-		const size_t *const n = *( const size_t** )harbol_array_get(bucket, i, sizeof n);
-		const uintptr_t real_index = (( uintptr_t )n - ( uintptr_t )map->hashes) / sizeof *n;
+		const size_t *const n = *( const size_t** )(harbol_array_get(bucket, i, sizeof n));
+		const uintptr_t real_index = (( uintptr_t )(n) - ( uintptr_t )(map->hashes)) / sizeof *n;
 		if( *n==hash && map->keylens[real_index]==keylen && !memcmp(map->keys[real_index], key, keylen) )
 			return true;
 	}
@@ -161,7 +168,7 @@ HARBOL_EXPORT bool harbol_map_insert(struct HarbolMap *const restrict map, const
 		return false;
 	}
 	
-	map->hashes[entry_index] = array_hash(key, keylen);
+	map->hashes[entry_index] = array_hash(key, keylen, map->seed);
 	if( !_harbol_map_insert_entry(map, entry_index) ) {
 		free(map->keys[entry_index]); map->keys[entry_index] = NULL;
 		free(map->datum[entry_index]); map->datum[entry_index] = NULL;
@@ -177,12 +184,12 @@ HARBOL_EXPORT size_t harbol_map_get_entry_index(const struct HarbolMap *const ma
 	if( !harbol_map_has_key(map, key, keylen) )
 		return SIZE_MAX;
 	
-	const size_t hash = array_hash(key, keylen);
+	const size_t hash = array_hash(key, keylen, map->seed);
 	const size_t index = hash & (map->cap - 1);
 	const struct HarbolArray *const bucket = &map->buckets[index];
 	for( size_t i=0; i<bucket->len; i++ ) {
-		const size_t *const n = *( const size_t** )harbol_array_get(bucket, i, sizeof n);
-		const uintptr_t real_index = (( uintptr_t )n - ( uintptr_t )map->hashes) / sizeof *n;
+		const size_t *const n = *( const size_t** )(harbol_array_get(bucket, i, sizeof n));
+		const uintptr_t real_index = (( uintptr_t )(n) - ( uintptr_t )(map->hashes)) / sizeof *n;
 		if( *n==hash && map->keylens[real_index]==keylen && !memcmp(map->keys[real_index], key, keylen) )
 			return real_index;
 	}
@@ -227,13 +234,12 @@ HARBOL_EXPORT bool harbol_map_key_rm(struct HarbolMap *const restrict map, const
 	if( !harbol_map_has_key(map, key, keylen) )
 		return false;
 	
-	const size_t hash = array_hash(key, keylen);
+	const size_t hash = array_hash(key, keylen, map->seed);
 	const size_t index = hash & (map->cap - 1);
 	const struct HarbolArray *const bucket = &map->buckets[index];
 	for( size_t i=0; i<bucket->len; i++ ) {
-		const size_t *const n = *( const size_t** )harbol_array_get(bucket, i, sizeof n);
-		const uintptr_t real_index = (( uintptr_t )n - ( uintptr_t )map->hashes) / sizeof *n;
-		printf("real_index: %zu\n", real_index);
+		const size_t *const n = *( const size_t** )(harbol_array_get(bucket, i, sizeof n));
+		const uintptr_t real_index = (( uintptr_t )(n) - ( uintptr_t )(map->hashes)) / sizeof *n;
 		if( *n==hash && map->keylens[real_index]==keylen && !memcmp(map->keys[real_index], key, keylen) )
 			return harbol_map_idx_rm(map, real_index);
 	}
@@ -261,10 +267,10 @@ HARBOL_EXPORT bool harbol_map_idx_rm(struct HarbolMap *const map, const size_t n
 		len3 = map->len,
 		len4 = map->len
 	;
-	harbol_gen_array_shift_up(( uint8_t* )map->keys,    &len1, n, sizeof *map->keys,    1);
-	harbol_gen_array_shift_up(( uint8_t* )map->datum,   &len2, n, sizeof *map->datum,   1);
-	harbol_gen_array_shift_up(( uint8_t* )map->hashes,  &len3, n, sizeof *map->hashes,  1);
-	harbol_gen_array_shift_up(( uint8_t* )map->keylens, &len4, n, sizeof *map->keylens, 1);
+	harbol_gen_array_shift_up(( uint8_t* )(map->keys),    &len1, n, sizeof *map->keys,    1);
+	harbol_gen_array_shift_up(( uint8_t* )(map->datum),   &len2, n, sizeof *map->datum,   1);
+	harbol_gen_array_shift_up(( uint8_t* )(map->hashes),  &len3, n, sizeof *map->hashes,  1);
+	harbol_gen_array_shift_up(( uint8_t* )(map->keylens), &len4, n, sizeof *map->keylens, 1);
 	map->len--;
 	return true;
 }

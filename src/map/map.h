@@ -12,7 +12,7 @@ extern "C" {
 struct HarbolMap {
 	struct HarbolArray *buckets;
 	uint8_t           **datum, **keys;
-	size_t             *hashes, *keylens, cap, len;
+	size_t             *hashes, *keylens, cap, len, seed;
 };
 
 

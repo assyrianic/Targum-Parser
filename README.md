@@ -1,7 +1,7 @@
 # Targum Parser
 
 ## Introduction
-Part of the Targum Compiler Frontend Suite, the Targum Parser is an string-configured, PEG interpretd parser.
+Part of the Targum Compiler Frontend Suite, the Targum Parser is an string-configured, PEG interpreted parser.
 
 
 ### Features
@@ -52,10 +52,10 @@ int main(const int argc, char *argv[static 1])
 		return 1;
 	}
 	
-	targum_parser_define_token(&parser, "integer", MyLexerIntVal);
-	targum_parser_define_token(&parser, "float", MyLexerFltVal);
-	targum_parser_define_token(&parser, "string", MyLexerStrVal);
-	targum_parser_define_token(&parser, "char", MyLexerCharVal);
+	targum_parser_define_token(&parser, "integer",    MyLexerIntVal);
+	targum_parser_define_token(&parser, "float",      MyLexerFltVal);
+	targum_parser_define_token(&parser, "string",     MyLexerStrVal);
+	targum_parser_define_token(&parser, "char",       MyLexerCharVal);
 	targum_parser_define_token(&parser, "identifier", MyLexerIdentVal);
 	
 	struct HarbolTree *cst = targum_parser_run(&parser);
@@ -91,7 +91,7 @@ To build a debug version of the library, run `make debug`.
 
 ### Testing
 
-For testing code changes or additions, simply run `make test` with `test_driver.c` in the directory which will build an executable called `test_driver`.
+For testing code changes or additions, simply run `make test` with `test_driver.c` in the directory which will build an executable called `test_driver` which relies on Targum Lexer as the counter-part to Targum Parser.
 
 
 ## Credits

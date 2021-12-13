@@ -17,3 +17,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_region_test
+	$(RM) harbol_region_output.txt
+
+run_test:
+	./harbol_region_test

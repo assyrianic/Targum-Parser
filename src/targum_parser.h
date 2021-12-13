@@ -75,6 +75,20 @@ TARGUM_API NO_NULL struct HarbolTree *targum_parser_run(struct TargumParser *par
 TARGUM_API NO_NULL void targum_parser_clear_cst(struct HarbolTree *cst);
 TARGUM_API NO_NULL void targum_parser_free_cst(struct HarbolTree **cst_ref);
 
+
+static inline NO_NULL void _print_tabs(const size_t tabs, FILE *const f) {
+	const size_t amount = tabs * 2;
+	char str_branches[256] = {0};
+	if( amount > 0 ) {
+		char *end = &str_branches[0] + sizeof str_branches;
+		char *p = harbol_memccpy(str_branches, " ", 0, sizeof str_branches);
+		for( size_t i=1; i<amount && p != NULL; i++ ) {
+			p = harbol_memccpy(p - 1, " ", 0, end - p);
+		}
+	}
+	fprintf(f, "%s", str_branches);
+}
+
 #ifdef __cplusplus
 }
 #endif

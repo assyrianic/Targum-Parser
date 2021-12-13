@@ -18,3 +18,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_tuple_test
+	$(RM) harbol_tuple_output.txt
+
+run_test:
+	./harbol_tuple_test

@@ -17,3 +17,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_bistack_test
+	$(RM) harbol_bistack_output.txt
+
+run_test:
+	./harbol_bistack_test

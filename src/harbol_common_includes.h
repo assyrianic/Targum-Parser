@@ -10,6 +10,10 @@
 #include <limits.h>
 #include <float.h>
 
+#ifdef __cplusplus
+#	include <type_traits>
+#endif
+
 
 /** placing this here so we can get this after including inttypes.h */
 #if defined(INTPTR_MAX)
@@ -27,13 +31,25 @@
 
 
 #ifndef NIL
-#	define NIL    ( uintptr_t )NULL
+#	define NIL    ( uintptr_t )(NULL)
 #endif
 
 
 /** types as defined by Harbol. */
 #ifndef __ssize_t_defined
-typedef long    ssize_t;
+#	if SIZE_MAX==UINT_MAX
+		typedef int ssize_t;        /** common 32 bit case */
+#		define SSIZE_MIN  INT_MIN
+#		define SSIZE_MAX  INT_MAX
+#	elif SIZE_MAX==ULONG_MAX
+		typedef long ssize_t;       /** linux 64 bits */
+#		define SSIZE_MIN  LONG_MIN
+#		define SSIZE_MAX  LONG_MAX
+#	elif SIZE_MAX==ULLONG_MAX
+		typedef long long ssize_t;  /** windows 64 bits */
+#		define SSIZE_MIN  LLONG_MIN
+#		define SSIZE_MAX  LLONG_MAX
+#	endif
 #	define __ssize_t_defined
 #endif
 
@@ -42,7 +58,6 @@ typedef long    ssize_t;
  * there are three floating point types: float, double, and long double.
  * 
  * The type double provides at least as much precision as float, and the type long double provides at least as much precision as double.
- * 
  * so in summary: float <= double <= long double
  */
 #ifndef __float32_t_defined
@@ -52,14 +67,14 @@ typedef long    ssize_t;
 #		define SCNf32    "f"
 #		define SCNxf32   "a"
 #		define strtof32  strtof
-		typedef float float32_t;
+		typedef float    float32_t;
 #	elif DBL_MANT_DIG==24
 #		define __float32_t_defined
 #		define PRIf32    "f"
 #		define SCNf32    "lf"
 #		define SCNxf32   "la"
 #		define strtof32  strtod
-		typedef double float32_t;
+		typedef double   float32_t;
 #	else
 #		error "no appropriate float32_t implementation"
 #	endif
@@ -77,7 +92,7 @@ typedef long    ssize_t;
 #		define SCNf64    "lf"
 #		define SCNxf64   "la"
 #		define strtof64  strtod
-		typedef double float64_t;
+		typedef double   float64_t;
 #	elif LDBL_MANT_DIG==53
 #		define __float64_t_defined
 #		define PRIf64    "Lf"
@@ -92,7 +107,7 @@ typedef long    ssize_t;
 #		define SCNf64    "f"
 #		define SCNxf64   "a"
 #		define strtof64  strtof
-		typedef float float64_t;
+		typedef float    float64_t;
 #	else
 #		error "no appropriate float64_t implementation"
 #	endif
@@ -142,14 +157,14 @@ typedef long    ssize_t;
 #		define SCNfMAX    "lf"
 #		define SCNxfMAX   "la"
 #		define strtofmax  strtod
-		typedef double floatmax_t;
+		typedef double    floatmax_t;
 #	elif DBL_MANT_DIG==FLT_MANT_DIG
 #		define __floatmax_t_defined
 #		define PRIfMAX    "f"
 #		define SCNfMAX    "f"
 #		define SCNxfMAX   "a"
 #		define strtofmax  strtof
-		typedef float floatmax_t;
+		typedef float     floatmax_t;
 #	else
 #		error "no appropriate floatmax_t implementation"
 #	endif
@@ -174,6 +189,23 @@ static inline void *harbol_recalloc(void *const arr, const size_t new_size, cons
 	return new_block;
 }
 
+#ifdef __cplusplus
+template< typename T >
+static inline T *harbol_tg_recalloc(T *const arr, const size_t new_size, const size_t old_size) {
+	if( arr==nullptr || old_size==0 )
+		return ( T* )(calloc(new_size, sizeof *arr));
+	
+	T *const restrict new_block = reinterpret_cast< T* >(realloc(arr, new_size * sizeof *arr));
+	if( new_block==nullptr )
+		return nullptr;
+	
+	if( old_size < new_size )
+		memset(&new_block[old_size], 0, (new_size - old_size) * sizeof *new_block);
+	
+	return new_block;
+}
+#endif
+
 static inline void harbol_cleanup(void *const ptr_ref) {
 #ifdef __cplusplus
 	void **const p = reinterpret_cast< decltype(p) >(ptr_ref);
@@ -188,7 +220,7 @@ static inline NO_NULL void *harbol_mempcpy(void *const dest, const void *const s
 	uint8_t *const r = reinterpret_cast< decltype(r) >(memcpy(dest, src, bytes));
 	return r + bytes;
 #else
-	return (( uint8_t* )memcpy(dest, src, bytes) + bytes);
+	return( ( uint8_t* )(memcpy(dest, src, bytes)) + bytes );
 #endif
 }
 
@@ -204,7 +236,7 @@ static inline NO_NULL void *harbol_memccpy(void *const restrict dest, const void
 #else
 	const uint8_t *const p = memchr(src, c, bytes);
 	if( p != NULL ) {
-		return harbol_mempcpy(dest, src, (p - ( const uint8_t* )src + 1));
+		return harbol_mempcpy(dest, src, (p - ( const uint8_t* )(src) + 1));
 	}
 	memcpy(dest, src, bytes);
 	return NULL;
@@ -224,54 +256,54 @@ static inline size_t harbol_pad_size(const size_t size, const size_t align) {
 /// these are NOT cryptographic hashes.
 /// use ONLY FOR HASH TABLE IMPLEMENTATIONS.
 #ifdef __cplusplus
-static inline NO_NULL size_t string_hash(const char *const key)
+static inline NO_NULL size_t string_hash(const char *const key, const size_t seed=0)
 #else
-static inline size_t string_hash(const char key[static 1])
+static inline size_t string_hash(const char key[static 1], const size_t seed)
 #endif
 {
-	size_t h = 0;
+	size_t h = seed;
 	for( size_t i=0; key[i] != 0; i++ ) {
-		h = (h<<6) ^ (h>>26) ^ ( size_t )key[i];
+		h = ( size_t )(key[i]) + (h << 6) + (h << 16) - h;
 	}
 	return h;
 }
 
 
 #ifdef __cplusplus
-static inline NO_NULL size_t array_hash(const uint8_t *const key, const size_t len)
+static inline NO_NULL size_t array_hash(const uint8_t *const key, const size_t len, const size_t seed=0)
 #else
-static inline size_t array_hash(const uint8_t key[static 1], const size_t len)
+static inline size_t array_hash(const uint8_t key[static 1], const size_t len, const size_t seed)
 #endif
 {
-	size_t h = 0;
+	size_t h = seed;
 	for( size_t i=0; i<len; i++ ) {
-		h = (h<<6) ^ (h>>26) ^ ( const size_t )key[i];
+		h = ( size_t )(key[i]) + (h << 6) + (h << 16) - h;
 	}
 	return h;
 }
 
-static inline size_t int_hash(const size_t i) {
-	size_t h = 0;
+static inline size_t int_hash(const size_t i, const size_t seed) {
+	size_t h = seed;
 	for( size_t n=0; n<sizeof(size_t) * CHAR_BIT; n += 8 ) {
-		h = (h<<6) ^ (h>>26) ^ ((i >> n) & 0xFF);
+		h = ((i >> n) & 0xFF) + (h << 6) + (h << 16) - h;
 	}
 	return h;
 }
 
-static inline size_t float_hash(const floatptr_t a) {
+static inline size_t float_hash(const floatptr_t a, const size_t seed) {
 	union {
 		const floatptr_t f;
 		const size_t     s;
 	} c = {a};
-	return int_hash(c.s);
+	return int_hash(c.s, seed);
 }
 
-static inline NO_NULL size_t ptr_hash(const void *const p) {
+static inline NO_NULL size_t ptr_hash(const void *const p, const size_t seed) {
 	union {
 		const void *const p;
 		const size_t      y;
 	} c = {p};
-	return (c.y >> 4u) | (c.y << (8u * sizeof(void*) - 4u));
+	return (c.y >> 4u) | ((c.y << (8u * sizeof(void*) - 4u)) + seed);
 }
 
 #ifdef C11
@@ -325,9 +357,8 @@ static inline NO_NULL uint8_t *make_buffer_from_binary(const char file_name[stat
 #endif
 {
 	FILE *restrict file = fopen(file_name, "rb");
-	if( file==NULL ) {
+	if( file==NULL )
 		return NULL;
-	}
 	
 	const ssize_t filesize = get_file_size(file);
 	if( filesize<=0 ) {
@@ -351,9 +382,8 @@ static inline NO_NULL char *make_buffer_from_text(const char file_name[static 1]
 #endif
 {
 	FILE *restrict file = fopen(file_name, "r");
-	if( file==NULL ) {
+	if( file==NULL )
 		return NULL;
-	}
 	
 	const ssize_t filesize = get_file_size(file);
 	if( filesize<=0 ) {
@@ -372,7 +402,7 @@ static inline NO_NULL char *make_buffer_from_text(const char file_name[static 1]
 }
 
 static inline bool is_ptr_aligned(const void *const ptr, const size_t bytes) {
-	return (( uintptr_t )ptr & (bytes-1))==0;
+	return (( uintptr_t )(ptr) & (bytes-1))==0;
 }
 
 static inline NO_NULL void *dup_data(const void *const data, const size_t bytes)
@@ -382,7 +412,7 @@ static inline NO_NULL void *dup_data(const void *const data, const size_t bytes)
 #else
 	uint8_t *restrict cpy = calloc(bytes, sizeof *cpy);
 #endif
-	return( cpy==NULL ) ? NULL : memcpy(cpy, data, bytes);
+	return( cpy==NULL )? NULL : memcpy(cpy, data, bytes);
 }
 
 #ifdef __cplusplus
@@ -397,19 +427,18 @@ static inline char *dup_str(const char cstr[static 1])
 #else
 	char *restrict cpy = calloc(len + 1, sizeof *cpy);
 #endif
-	return( cpy==NULL ) ? NULL : strcpy(cpy, cstr);
+	return( cpy==NULL )? NULL : strcpy(cpy, cstr);
 }
 
 
 #ifdef __cplusplus
-static inline NO_NULL char *sprintf_alloc(const char *restrict fmt, ...)
+static inline NO_NULL char *sprintf_alloc(const char *fmt, ...)
 #else
 static inline char *sprintf_alloc(const char fmt[static 1], ...)
 #endif
 {
-	va_list ap, st;
-	va_start(ap, fmt);
-	va_copy(st, ap);
+	va_list ap; va_start(ap, fmt);
+	va_list st; va_copy(st, ap);
 	
 	char c = 0;
 	const int32_t size = vsnprintf(&c, 1, fmt, ap);
@@ -427,17 +456,58 @@ static inline char *sprintf_alloc(const char fmt[static 1], ...)
 	return text;
 }
 
-static inline NO_NULL void harbol_print_tree_tabs(const size_t tabs, FILE *const f) {
-	const size_t amount = tabs * 2;
-	char str_branches[256] = {0};
-	if( amount > 0 ) {
-		char *end = &str_branches[0] + sizeof str_branches;
-		char *p = harbol_memccpy(str_branches, " ", 0, sizeof str_branches);
-		for( size_t i=1; i<amount && p != NULL; i++ ) {
-			p = harbol_memccpy(p - 1, " ", 0, end - p);
-		}
+static inline bool is_int_in_bounds(const ssize_t val, const ssize_t max, const ssize_t min) {
+	return ((val - min) * (max - val)) >= 0;
+}
+
+static inline bool is_uint_in_bounds(const size_t val, const size_t max, const size_t min) {
+	return (val - min) <= (max - min);
+}
+
+static inline NO_NULL bool is_uintptr_in_bounds(const uintptr_t val, const uintptr_t max, const uintptr_t min) {
+	return (val - min) <= (max - min);
+}
+
+static inline NO_NULL bool is_ptr_in_bounds(const void *const val, const void *const max, const void *const min) {
+	const uint8_t
+		*const v = val,
+		*const a = max,
+		*const b = min
+	;
+	return (v - b) <= (a - b);
+}
+
+#ifdef __cplusplus
+template< typename T >
+static inline constexpr bool is_in_bounds(const T val, const T max, const T min) {
+	if( std::is_signed< T > ) {
+		return ((val - min) * (max - val)) >= 0;
+	} else {
+		return (val - min) <= (max - min);
 	}
-	fprintf(f, "%s", str_branches);
+}
+#endif
+
+
+/// END the params with a NULL.
+/// Within a variable list of strings to compare to,
+/// returns an index or SIZE_MAX aka (size_t)(-1) if not found
+#ifdef __cplusplus
+static inline size_t cstr_switch(const char *cstr, ...) {
+#else
+static inline size_t cstr_switch(const char cstr[static 1], ...) {
+#endif
+	va_list ap; va_start(ap, cstr);
+	size_t index = 0;
+	const char *arg = NULL;
+	while( (arg = va_arg(ap, const char*)) != NULL ) {
+		if( !strcmp(cstr, arg) ) {
+			break;
+		}
+		index++;
+	}
+	va_end(ap);
+	return arg==NULL? SIZE_MAX : index;
 }
 
 #endif /** HARBOL_COMMON_INCLUDES_INCLUDED */

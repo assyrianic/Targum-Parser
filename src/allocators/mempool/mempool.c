@@ -7,7 +7,7 @@
 
 HARBOL_EXPORT struct HarbolMemNode *harbol_memnode_split(struct HarbolMemNode *const node, const size_t bytes)
 {
-	const uintptr_t n = ( uintptr_t )node;
+	const uintptr_t n = ( uintptr_t )(node);
 	struct HarbolMemNode *const r = ( struct HarbolMemNode* )(n + (node->size - bytes));
 	node->size -= bytes;
 	r->size = bytes;
@@ -57,26 +57,38 @@ HARBOL_EXPORT void harbol_freelist_insert(struct HarbolMemPool *const mempool, s
 	}
 	
 	for( struct HarbolMemNode *iter = list->head; iter != NULL; iter = iter->next ) {
-		if( ( uintptr_t )iter==mempool->stack.offs ) {
+		if( ( uintptr_t )(iter)==mempool->stack.offs ) {
 			mempool->stack.offs += iter->size;
 			harbol_freelist_remove(list, iter);
 			iter = list->head;
+			if( iter==NULL ) {
+				list->head = node;    
+				return;
+            }
 			continue;
 		}
-		const uintptr_t inode = ( uintptr_t )node;
-		const uintptr_t iiter = ( uintptr_t )iter;
+		const uintptr_t inode = ( uintptr_t )(node);
+		const uintptr_t iiter = ( uintptr_t )(iter);
 		const uintptr_t iter_end = iiter + iter->size;
 		const uintptr_t node_end = inode + node->size;
 		
 		if( iter==node ) {
 			return;
 		} else if( iter < node ) {
-			if( iter_end > inode ) { /// node was coalesced prior.
+			if( iter_end > inode ) {
+				/// node was coalesced prior.
 				return;
-			} else if( iter_end==inode ) { /// if we can coalesce, do so.
+			} else if( iter_end==inode ) {
+				/// if we can coalesce, do so.
 				iter->size += node->size;
 				return;
-			}
+			} else if (iter->next == NULL) {
+				// we reached the end of the free list -> append the node
+				iter->next = node;
+				node->prev = iter;
+				list->len++;
+				return;    
+            }
 		} else if( iter > node ) {
 			/// Address sort, lowest to highest aka ascending order.
 			if( iter==list->head ) {
@@ -108,7 +120,7 @@ HARBOL_EXPORT void harbol_freelist_insert(struct HarbolMemPool *const mempool, s
 				}
 				return;
 			} else {
-				harbol_freelist_insert_before(list, iter, node);
+				harbol_freelist_insert_before(list, node, iter);
 				list->len++;
 				return;
 			}
@@ -142,12 +154,14 @@ HARBOL_EXPORT struct HarbolMemNode *harbol_freelist_remove(struct HarbolFreeList
 HARBOL_EXPORT struct HarbolMemNode *harbol_freelist_find(struct HarbolFreeList *const list, const size_t bytes)
 {
 	for( struct HarbolMemNode *node = list->head; node != NULL; node = node->next ) {
-		if( node->size < bytes )
+		if( node->size < bytes ) {
 			continue;
-		/// close in size - reduce fragmentation by not splitting.
-		else if( node->size <= bytes + MEM_SPLIT_THRESHOLD )
+		} else if( node->size <= bytes + MEM_SPLIT_THRESHOLD ) {
+			/// close in size - reduce fragmentation by not splitting.
 			return harbol_freelist_remove(list, node);
-		else return harbol_memnode_split(node, bytes);
+		} else {
+			return harbol_memnode_split(node, bytes);
+		}
 	}
 	return NULL;
 }
@@ -189,41 +203,51 @@ HARBOL_EXPORT void harbol_mempool_clear(struct HarbolMemPool *const mempool)
 	*mempool = ( struct HarbolMemPool ){0};
 }
 
-static NO_NULL struct HarbolMemNode *_get_freenode(struct HarbolMemPool *const mempool, const size_t bytes)
-{
+static NO_NULL void *_get_freenode(struct HarbolMemPool *const mempool, const size_t bytes) {
 	/// check if we have a good sized node from the buckets.
 	const size_t slot = (bytes >> HARBOL_BUCKET_BITS) - 1;
 	struct HarbolFreeList *const l = (slot < HARBOL_BUCKET_SIZE) ? &mempool->buckets[slot] : &mempool->large;
-	return harbol_freelist_find(l, bytes);
+	struct HarbolMemNode *new_mem = harbol_freelist_find(l, bytes);
+	if( new_mem==NULL ) {
+		return NULL;
+	} else {
+		new_mem->next = new_mem->prev = NULL;
+		uint8_t *const final_mem = ( uint8_t* )(new_mem) + sizeof *new_mem;
+		return memset(final_mem, 0, new_mem->size - sizeof *new_mem);
+	}
+}
+
+static NO_NULL void *_get_stknode(struct HarbolMemPool *const mempool, const size_t alloc_bytes) {
+	struct HarbolMemNode *new_mem = harbol_region_alloc(&mempool->stack, alloc_bytes);
+	if( new_mem==NULL ) {
+		return NULL;
+	} else {
+		new_mem->size = alloc_bytes;
+		new_mem->next = new_mem->prev = NULL;
+		uint8_t *const final_mem = ( uint8_t* )(new_mem) + sizeof *new_mem;
+		return memset(final_mem, 0, new_mem->size - sizeof *new_mem);
+	}
 }
 
 HARBOL_EXPORT void *harbol_mempool_alloc(struct HarbolMemPool *const mempool, const size_t size)
 {
-	if( size==0 || size > mempool->stack.size )
+	if( size==0 || size > mempool->stack.size ) {
 		return NULL;
-	
-	/// visual of the allocation block.
-	/// --------------
-	/// |  mem size  | lowest addr of block
-	/// |  next node | 12 bytes - 32 bit
-	/// |  prev node | 24 bytes - 64 bit
-	/// |------------|
-	/// |   alloc'd  |
-	/// |   memory   |
-	/// |   space    | highest addr of block
-	/// --------------
-	const size_t alloc_bytes = harbol_align_size(size + sizeof(struct HarbolMemNode), sizeof(intptr_t));
-	struct HarbolMemNode *new_mem = _get_freenode(mempool, alloc_bytes);
-	if( new_mem==NULL ) {
-		new_mem = harbol_region_alloc(&mempool->stack, alloc_bytes);
-		if( new_mem==NULL )
-			return NULL;
-		else new_mem->size = alloc_bytes;
+	} else {
+		/// visual of the allocation block.
+		/// --------------
+		/// |  mem size  | lowest addr of block
+		/// |  next node | 12 bytes - 32 bit
+		/// |  prev node | 24 bytes - 64 bit
+		/// |------------|
+		/// |   alloc'd  |
+		/// |   memory   |
+		/// |   space    | highest addr of block
+		/// --------------
+		const size_t alloc_bytes = harbol_align_size(size + sizeof(struct HarbolMemNode), sizeof(intptr_t));
+		void *restrict new_mem = _get_freenode(mempool, alloc_bytes);
+		return ( new_mem==NULL )? _get_stknode(mempool, alloc_bytes) : new_mem;
 	}
-	
-	new_mem->next = new_mem->prev = NULL;
-	uint8_t *const final_mem = ( uint8_t* )new_mem + sizeof *new_mem;
-	return memset(final_mem, 0, new_mem->size - sizeof *new_mem);
 }
 
 HARBOL_EXPORT void *harbol_mempool_realloc(struct HarbolMemPool *const restrict mempool, void *const ptr, const size_t size)
@@ -233,10 +257,10 @@ HARBOL_EXPORT void *harbol_mempool_realloc(struct HarbolMemPool *const restrict 
 	/// NULL ptr should make this work like regular alloc.
 	else if( ptr==NULL )
 		return harbol_mempool_alloc(mempool, size);
-	else if( ( uintptr_t )ptr - sizeof(struct HarbolMemNode) < mempool->stack.mem )
+	else if( ( uintptr_t )(ptr) - sizeof(struct HarbolMemNode) < mempool->stack.mem )
 		return NULL;
 	
-	struct HarbolMemNode *node = ( struct HarbolMemNode* )(( uint8_t* )ptr - sizeof *node);
+	struct HarbolMemNode *node = ( struct HarbolMemNode* )(( uint8_t* )(ptr) - sizeof *node);
 	uint8_t *resized_block = harbol_mempool_alloc(mempool, size);
 	if( resized_block==NULL )
 		return NULL;
@@ -249,22 +273,20 @@ HARBOL_EXPORT void *harbol_mempool_realloc(struct HarbolMemPool *const restrict 
 
 HARBOL_EXPORT bool harbol_mempool_free(struct HarbolMemPool *const restrict mempool, void *const ptr)
 {
-	if( ptr==NULL || ( uintptr_t )ptr - sizeof(struct HarbolMemNode) < mempool->stack.mem )
+	if( ptr==NULL || ( uintptr_t )(ptr) - sizeof(struct HarbolMemNode) < mempool->stack.mem )
 		return false;
 	
 	/// behind the actual pointer data is the allocation info.
-	struct HarbolMemNode *mem_node = ( struct HarbolMemNode* )(( uint8_t* )ptr - sizeof *mem_node);
+	struct HarbolMemNode *mem_node = ( struct HarbolMemNode* )(( uint8_t* )(ptr) - sizeof *mem_node);
 	const size_t slot = (mem_node->size >> HARBOL_BUCKET_BITS) - 1;
 	
 	/// make sure the pointer data is valid.
-	if( ( uintptr_t )mem_node < mempool->stack.offs
-			|| (( uintptr_t )mem_node - mempool->stack.mem) > mempool->stack.size
-			|| mem_node->size==0
-			|| mem_node->size > mempool->stack.size )
+	if( !is_uintptr_in_bounds(( uintptr_t )(mem_node), mempool->stack.mem + mempool->stack.size, mempool->stack.offs)
+			|| !is_uint_in_bounds(mem_node->size, mempool->stack.size, sizeof(struct HarbolMemNode)) )
 		return false;
 	
 	/// if the mem_node is right at the stack base ptr, then add it to the stack.
-	if( ( uintptr_t )mem_node==mempool->stack.offs ) {
+	if( ( uintptr_t )(mem_node)==mempool->stack.offs ) {
 		mempool->stack.offs += mem_node->size;
 	} else {
 		/// try to place it into bucket or large freelist.

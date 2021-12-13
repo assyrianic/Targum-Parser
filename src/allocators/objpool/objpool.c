@@ -11,7 +11,7 @@ HARBOL_EXPORT NO_NULL bool harbol_objpool_init(struct HarbolObjPool *const objpo
 	}
 	
 	const size_t aligned_objsize = harbol_align_size(objsize, sizeof(size_t));
-	objpool->mem = ( uintptr_t )calloc(len, aligned_objsize);
+	objpool->mem = ( uintptr_t )(calloc(len, aligned_objsize));
 	if( objpool->mem==NIL ) {
 		return false;
 	}
@@ -41,7 +41,7 @@ HARBOL_EXPORT NO_NULL bool harbol_objpool_init_from_buffer(struct HarbolObjPool 
 	
 	objpool->objsize = harbol_align_size(objsize, sizeof(size_t));
 	objpool->size = objpool->free_blocks = len;
-	objpool->mem = ( uintptr_t )buf;
+	objpool->mem = ( uintptr_t )(buf);
 	for( size_t i=0; i<objpool->free_blocks; i++ ) {
 		size_t *const restrict index = ( size_t* )(objpool->mem + (i * objpool->objsize));
 		*index = i + 1;
@@ -62,30 +62,30 @@ HARBOL_EXPORT void harbol_objpool_clear(struct HarbolObjPool *const objpool)
 	if( objpool->mem==NIL )
 		return;
 	
-	free(( void* )objpool->mem);
-	*objpool = (struct HarbolObjPool){0};
+	free(( void* )(objpool->mem));
+	*objpool = ( struct HarbolObjPool ){0};
 }
 
 HARBOL_EXPORT void *harbol_objpool_alloc(struct HarbolObjPool *const objpool)
 {
-	if( objpool->free_blocks > 0 ) {
-		/// for first allocation, head points to the very first index.
-		/// next = &pool[0];
-		/// ret = next == ret = &pool[0];
-		size_t *const index = ( size_t* )objpool->next;
-		objpool->free_blocks--;
-		
-		/// after allocating, we set head to the address of the index that *next holds.
-		/// next = &pool[*next * pool.objsize];
-		objpool->next = ( objpool->free_blocks != 0 ) ? objpool->mem + (*index * objpool->objsize) : 0;
-		return memset(index, 0, objpool->objsize);
-	}
-	return NULL;
+	if( objpool->free_blocks==0 )
+		return NULL;
+	
+	/// for first allocation, head points to the very first index.
+	/// next = &pool[0];
+	/// ret = next == ret = &pool[0];
+	size_t *const index = ( size_t* )(objpool->next);
+	objpool->free_blocks--;
+	
+	/// after allocating, we set head to the address of the index that *next holds.
+	/// next = &pool[*next * pool.objsize];
+	objpool->next = ( objpool->free_blocks != 0 )? objpool->mem + (*index * objpool->objsize) : NIL;
+	return memset(index, 0, objpool->objsize);
 }
 
 HARBOL_EXPORT void harbol_objpool_free(struct HarbolObjPool *const restrict objpool, void *const restrict ptr)
 {
-	const uintptr_t p = ( uintptr_t )ptr;
+	const uintptr_t p = ( uintptr_t )(ptr);
 	if( ptr==NULL || p < objpool->mem || p > objpool->mem + (objpool->size * objpool->objsize) ) {
 		return;
 	}
@@ -96,7 +96,7 @@ HARBOL_EXPORT void harbol_objpool_free(struct HarbolObjPool *const restrict objp
 	/// next = p;
 	{
 		size_t *const restrict index = ptr;
-		*index = ( objpool->next != 0 ) ? (objpool->next - objpool->mem) / objpool->objsize : objpool->size;
+		*index = ( objpool->next != NIL )? (objpool->next - objpool->mem) / objpool->objsize : objpool->size;
 	}
 	objpool->next = p;
 	++objpool->free_blocks;

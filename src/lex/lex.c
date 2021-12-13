@@ -4,6 +4,7 @@
 #	define HARBOL_LIB
 #endif
 
+
 HARBOL_EXPORT bool is_alphabetic(const int32_t c) {
 	return( (c>='a' && c<='z') || (c>='A' && c<='Z') || c=='_' || c < -1 );
 }
@@ -27,7 +28,7 @@ HARBOL_EXPORT bool is_whitespace(const int32_t c) {
 }
 
 HARBOL_EXPORT bool is_valid_unicode(const int32_t u) {
-	const uint32_t c = ( const uint32_t )u;
+	const uint32_t c = ( uint32_t )(u);
 	/// C11 6.4.3p2: U+D800 to U+DFFF are reserved for surrogate pairs.
 	/// A codepoint within the range cannot be a valid character.
 	if( 0xD800u <= c && c <= 0xDFFFu )
@@ -35,7 +36,11 @@ HARBOL_EXPORT bool is_valid_unicode(const int32_t u) {
 	/// It's not allowed to encode ASCII characters using \U or \u.
 	/// Some characters not in the basic character set (C11 5.2.1p3)
 	/// are allowed as exceptions.
-	return 0xA0u <= c || c == '$' || c == '@' || c == '`';
+	return 0xA0u <= c || c=='$' || c=='@' || c=='`';
+}
+
+HARBOL_EXPORT bool check_is_char(const char str[static 1], const size_t len, const size_t idx, const int32_t c) {
+	return ( idx >= len )? false : str[idx] != 0 && str[idx]==c;
 }
 
 HARBOL_EXPORT size_t get_utf8_len(const char c) {
@@ -226,17 +231,20 @@ HARBOL_EXPORT bool write_utf8_str(struct HarbolString *const str, const int32_t 
 }
 
 HARBOL_EXPORT size_t read_utf8(const char cstr[static 1], const size_t cstrlen, int32_t *const restrict rune) {
+	*rune = -1;
+	if( cstr[0]==0 ) {
+		return 0;
+	}
+	
 	const size_t utf8len = get_utf8_len(cstr[0]);
 	if( utf8len==0 ) {
 		*rune = cstr[0];
 		return 1;
 	} else if( utf8len > cstrlen ) {
-		*rune = -1;
 		return 0;
 	} else {
 		for( size_t i=1; i<utf8len; i++ ) {
 			if( (cstr[i] & 0xc0) != 0x80 ) {
-				*rune = -1;
 				return 0;
 			}
 		}
@@ -245,7 +253,6 @@ HARBOL_EXPORT size_t read_utf8(const char cstr[static 1], const size_t cstrlen, 
 			case 3: *rune = ((cstr[0] & 0xF) << 12) | ((cstr[1] & 0x3F) << 6) | (cstr[2] & 0x3F); break;
 			case 4: *rune = ((cstr[0] & 0x7) << 18) | ((cstr[1] & 0x3F) << 12) | ((cstr[2] & 0x3F) << 6) | (cstr[3] & 0x3F); break;
 			default:
-				*rune = -1;
 				return 0;
 		}
 		return utf8len;
@@ -263,15 +270,15 @@ HARBOL_EXPORT int32_t *utf8_to_rune(const struct HarbolString *const str, size_t
 	size_t iter_len = 0;
 	while( str->cstr[iter_len] != 0 ) {
 		const size_t bytes_read = read_utf8(&str->cstr[iter_len], str->len - iter_len, &runes[rune_count]);
-		if( runes[rune_count] <= 0 )
+		if( runes[rune_count] <= 0 ) {
 			break;
-		
+		}
 		iter_len += bytes_read;
 		rune_count++;
 		int32_t *const new_buf = harbol_recalloc(runes, rune_count + 1, sizeof *runes, rune_count);
-		if( new_buf==NULL )
+		if( new_buf==NULL ) {
 			break;
-		
+		}
 		runes = new_buf;
 	}
 	*rune_len = rune_count;
@@ -282,8 +289,9 @@ HARBOL_EXPORT int32_t *utf8_to_rune(const struct HarbolString *const str, size_t
 HARBOL_EXPORT struct HarbolString rune_to_utf8_str(const int32_t runes[static 1], const size_t rune_len) {
 	struct HarbolString str = {0};
 	for( size_t i=0; i<rune_len; i++ ) {
-		if( !write_utf8_str(&str, runes[i]) )
+		if( !write_utf8_str(&str, runes[i]) ) {
 			break;
+		}
 	}
 	return str;
 }
@@ -395,16 +403,17 @@ HARBOL_EXPORT int lex_c_style_hex(const char str[static 1], const char **const e
 	
 	size_t lit_flags = 0;
 	const size_t
-		uflag = 1u << 0u,
-		long1 = 1u << 1u,
-		long2 = 1u << 2u,
-		flt_dot = 1u << 3u,
+		uflag      = 1u << 0u,
+		long1      = 1u << 1u,
+		long2      = 1u << 2u,
+		flt_dot    = 1u << 3u,
 		exponent_p = 1u << 4u, /// xxx.xpxxx
-		one_hex = 1u << 5u,
-		f_suffix = 1u << 6u,
-		math_op = 1u << 7u
+		one_hex    = 1u << 5u,
+		f_suffix   = 1u << 6u,
+		math_op    = 1u << 7u,
+		digit_sep  = 1u << 8u
 	;
-	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-') ) {
+	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-' || *str==DigitSep_C) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
 			case '.':
@@ -412,6 +421,10 @@ HARBOL_EXPORT int lex_c_style_hex(const char str[static 1], const char **const e
 				if( !(lit_flags & one_hex) ) { /// missing at least one hex number before float dot.
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexMissingHexB4dot;
+					goto lex_c_style_hex_err;
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_C ) { /// digit sep before or after dot.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexDigitSepNearDot;
 					goto lex_c_style_hex_err;
 				} else {
 					lit_flags |= flt_dot;
@@ -424,6 +437,10 @@ HARBOL_EXPORT int lex_c_style_hex(const char str[static 1], const char **const e
 				if( (lit_flags & exponent_p) ) { /// too many P's.
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexTooManyPs;
+					goto lex_c_style_hex_err;
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_C ) { /// digit sep before or after exponent.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexDigitSepNearExp;
 					goto lex_c_style_hex_err;
 				} else {
 					lit_flags |= exponent_p;
@@ -519,6 +536,17 @@ HARBOL_EXPORT int lex_c_style_hex(const char str[static 1], const char **const e
 				} else {
 					harbol_string_add_char(buf, chr);
 				}
+				lit_flags &= ~digit_sep;
+				break;
+			case DigitSep_C:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexExtraDigitSeps;
+					goto lex_c_style_hex_err;
+				} else {
+					harbol_string_add_char(buf, chr);
+					lit_flags |= digit_sep;
+				}
 				break;
 			default:
 				if( chr <= -1 ) {
@@ -537,6 +565,9 @@ HARBOL_EXPORT int lex_c_style_hex(const char str[static 1], const char **const e
 		goto lex_c_style_hex_err;
 	} else if( !(lit_flags & one_hex) ) { /// hex float or int with no digits or bad suffix.
 		result = HarbolLexHexMissingDigits;
+		goto lex_c_style_hex_err;
+	} else if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
 		goto lex_c_style_hex_err;
 	}
 lex_c_style_hex_err:;
@@ -566,20 +597,20 @@ HARBOL_EXPORT int lex_go_style_hex(const char str[static 1], const char **const 
 	
 	size_t lit_flags = 0;
 	const size_t
-		flt_dot = 1u << 0u,
+		flt_dot    = 1u << 0u,
 		exponent_p = 1u << 1u, /** xxx.xpxxx */
-		underscore_flag = 1u << 2u,
-		math_op = 1u << 3u,
-		one_hex = 1u << 4u
+		digit_sep  = 1u << 2u,
+		math_op    = 1u << 3u,
+		one_hex    = 1u << 4u
 	;
-	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-' || *str=='_') ) {
+	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-' || *str==DigitSep_Go) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
 			case '.':
 				*is_float = true;
-				if( (lit_flags & underscore_flag) || str[1]=='_' ) { /// underscore before or after dot.
+				if( (lit_flags & digit_sep) || str[1]==DigitSep_Go ) { /// digit sep before or after dot.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexUnderscoreNearDot;
+					result = HarbolLexDigitSepNearDot;
 					goto lex_go_style_hex_err;
 				} else {
 					lit_flags |= flt_dot;
@@ -592,9 +623,9 @@ HARBOL_EXPORT int lex_go_style_hex(const char str[static 1], const char **const 
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexHexNoDigitsB4Exp;
 					goto lex_go_style_hex_err;
-				} else if( (lit_flags & underscore_flag) || str[1]=='_' ) { /// underscore before or after exponent.
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_Go ) { /// digit sep before or after exponent.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexUnderscoreNearExp;
+					result = HarbolLexDigitSepNearExp;
 					goto lex_go_style_hex_err;
 				} else {
 					lit_flags |= exponent_p;
@@ -621,16 +652,16 @@ HARBOL_EXPORT int lex_go_style_hex(const char str[static 1], const char **const 
 					lit_flags |= one_hex;
 				}
 				harbol_string_add_char(buf, chr);
-				lit_flags &= ~underscore_flag;
+				lit_flags &= ~digit_sep;
 				break;
-			case '_':
-				if( lit_flags & underscore_flag ) { /// too many underscores.
+			case DigitSep_Go:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexExtraUnderscores;
+					result = HarbolLexExtraDigitSeps;
 					goto lex_go_style_hex_err;
 				} else {
 					harbol_string_add_char(buf, chr);
-					lit_flags |= underscore_flag;
+					lit_flags |= digit_sep;
 				}
 				break;
 			default: /// invalid hex digit/glyph.
@@ -643,8 +674,8 @@ HARBOL_EXPORT int lex_go_style_hex(const char str[static 1], const char **const 
 	if( (lit_flags & flt_dot) && !(lit_flags & exponent_p) ) { /// hex float missing exponent.
 		result = HarbolLexHexFltNoExp;
 		goto lex_go_style_hex_err;
-	} else if( lit_flags & underscore_flag ) { /// underscores can only separate digits.
-		result = HarbolLexUnderscoreNotSepDigits;
+	} else if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
 		goto lex_go_style_hex_err;
 	}
 lex_go_style_hex_err:;
@@ -666,13 +697,24 @@ HARBOL_EXPORT int lex_c_style_octal(const char str[static 1], const char **const
 	
 	size_t lit_flags = 0;
 	const size_t
-		uflag = 1u,
-		long1 = 1u << 1u,
-		long2 = 1u << 2u
+		uflag     = 1u,
+		long1     = 1u << 1u,
+		long2     = 1u << 2u,
+		digit_sep = 1u << 3u
 	;
-	while( *str != 0 && (isalnum(*str) || *str=='.') ) {
+	while( *str != 0 && (isalnum(*str) || *str=='.' || *str==DigitSep_C) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
+			case DigitSep_C:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexExtraDigitSeps;
+					goto lex_c_style_octal_err;
+				} else {
+					harbol_string_add_char(buf, chr);
+					lit_flags |= digit_sep;
+				}
+				break;
 			case '.':
 				return lex_c_style_decimal(str, end, buf, is_float);
 			case 'U': case 'u':
@@ -708,6 +750,7 @@ HARBOL_EXPORT int lex_c_style_octal(const char str[static 1], const char **const
 				} else {
 					harbol_string_add_char(buf, chr);
 				}
+				lit_flags &= ~digit_sep;
 				break;
 			default: /// bad digit/glyph.
 				harbol_string_add_char(buf, chr);
@@ -716,6 +759,11 @@ HARBOL_EXPORT int lex_c_style_octal(const char str[static 1], const char **const
 				break;
 		}
 		str++;
+	}
+	
+	if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
+		goto lex_c_style_octal_err;
 	}
 lex_c_style_octal_err:;
 	*end = str;
@@ -744,25 +792,25 @@ HARBOL_EXPORT int lex_go_style_octal(const char str[static 1], const char **cons
 	
 	size_t lit_flags = 0;
 	const size_t
-		underscore_flag = 1u
+		digit_sep = 1u
 	;
-	while( *str != 0 && isalnum(*str) ) {
+	while( *str != 0 && (isalnum(*str) || *str==DigitSep_Go) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
-			case '_':
-				if( lit_flags & underscore_flag ) { /// too many underscores.
+			case DigitSep_Go:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexExtraUnderscores;
+					result = HarbolLexExtraDigitSeps;
 					goto lex_go_style_octal_err;
 				} else {
 					harbol_string_add_char(buf, chr);
-					lit_flags |= underscore_flag;
+					lit_flags |= digit_sep;
 				}
 				break;
 			case '0': case '1': case '2': case '3':
 			case '4': case '5': case '6': case '7':
 				harbol_string_add_char(buf, chr);
-				lit_flags &= ~underscore_flag;
+				lit_flags &= ~digit_sep;
 				break;
 			default: /// bad digit/glyph.
 				harbol_string_add_char(buf, chr);
@@ -773,8 +821,8 @@ HARBOL_EXPORT int lex_go_style_octal(const char str[static 1], const char **cons
 		str++;
 	}
 	
-	if( lit_flags & underscore_flag ) { /// underscores can only separate digits.
-		result = HarbolLexUnderscoreNotSepDigits;
+	if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
 		goto lex_go_style_octal_err;
 	}
 lex_go_style_octal_err:;
@@ -804,13 +852,24 @@ HARBOL_EXPORT int lex_c_style_binary(const char str[static 1], const char **cons
 	
 	size_t lit_flags = 0;
 	const size_t
-		uflag = 1u << 0u,
-		long1 = 1u << 1u,
-		long2 = 1u << 2u
+		uflag     = 1u << 0u,
+		long1     = 1u << 1u,
+		long2     = 1u << 2u,
+		digit_sep = 1u << 3u
 	;
-	while( *str != 0 && isalnum(*str) ) {
+	while( *str != 0 && (isalnum(*str) || *str==DigitSep_C) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
+			case DigitSep_C:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexExtraDigitSeps;
+					goto lex_c_style_binary_err;
+				} else {
+					harbol_string_add_char(buf, chr);
+					lit_flags |= digit_sep;
+				}
+				break;
 			case 'U': case 'u':
 				if( lit_flags & uflag ) { /// too many Us.
 					harbol_string_add_char(buf, chr);
@@ -843,6 +902,7 @@ HARBOL_EXPORT int lex_c_style_binary(const char str[static 1], const char **cons
 				} else {
 					harbol_string_add_char(buf, chr);
 				}
+				lit_flags &= ~digit_sep;
 				break;
 			default: /// bad digit/glyph.
 				harbol_string_add_char(buf, chr);
@@ -851,6 +911,11 @@ HARBOL_EXPORT int lex_c_style_binary(const char str[static 1], const char **cons
 				break;
 		}
 		str++;
+	}
+	
+	if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
+		goto lex_c_style_binary_err;
 	}
 lex_c_style_binary_err:;
 	*end = str;
@@ -879,24 +944,24 @@ HARBOL_EXPORT int lex_go_style_binary(const char str[static 1], const char **con
 	
 	size_t lit_flags = 0;
 	const size_t
-		underscore_flag = 1u
+		digit_sep = 1u
 	;
-	while( *str != 0 && isalnum(*str) ) {
+	while( *str != 0 && (isalnum(*str) || *str==DigitSep_Go) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
-			case '_':
-				if( lit_flags & underscore_flag ) { /// too many underscores.
+			case DigitSep_Go:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexExtraUnderscores;
+					result = HarbolLexExtraDigitSeps;
 					goto lex_go_style_binary_err;
 				} else {
 					harbol_string_add_char(buf, chr);
-					lit_flags |= underscore_flag;
+					lit_flags |= digit_sep;
 				}
 				break;
 			case '0': case '1':
 				harbol_string_add_char(buf, chr);
-				lit_flags &= ~underscore_flag;
+				lit_flags &= ~digit_sep;
 				break;
 			default: /// bad digit/glyph.
 				result = HarbolLexBadGylph;
@@ -907,8 +972,8 @@ HARBOL_EXPORT int lex_go_style_binary(const char str[static 1], const char **con
 		str++;
 	}
 	
-	if( lit_flags & underscore_flag ) { /// underscores can only separate digits.
-		result = HarbolLexUnderscoreNotSepDigits;
+	if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
 		goto lex_go_style_binary_err;
 	}
 lex_go_style_binary_err:;
@@ -916,29 +981,34 @@ lex_go_style_binary_err:;
 	return result;
 }
 
-HARBOL_EXPORT int lex_c_style_decimal(const char str[], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
+HARBOL_EXPORT int lex_c_style_decimal(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
 	int result = HarbolLexNoErr;
 	if( *str==0 ) {
 		return HarbolLexEoF;
 	}
 	size_t lit_flags = 0;
 	const size_t
-		uflag = 1u << 0u,
-		long1 = 1u << 1u,
-		long2 = 1u << 2u,
-		flt_dot = 1u << 3u,
-		flt_f_flag = 1u << 4u,
-		flt_e_flag = 1u << 5u,
+		uflag       = 1u << 0u,
+		long1       = 1u << 1u,
+		long2       = 1u << 2u,
+		flt_dot     = 1u << 3u,
+		flt_f_flag  = 1u << 4u,
+		flt_e_flag  = 1u << 5u,
 		got_exp_num = 1u << 6u,
-		math_op = 1u << 7u
+		math_op     = 1u << 7u,
+		digit_sep   = 1u << 8u
 	;
-	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-') ) {
+	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-' || *str==DigitSep_C) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
 			case '.':
 				if( lit_flags & flt_dot ) { /// too many float dots.
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexExtraFltDot;
+					goto lex_c_style_decimal_err;
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_C ) { /// digit sep before or after dot.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexDigitSepNearDot;
 					goto lex_c_style_decimal_err;
 				} else {
 					lit_flags |= flt_dot;
@@ -984,6 +1054,10 @@ HARBOL_EXPORT int lex_c_style_decimal(const char str[], const char **const end, 
 				} else if( lit_flags & flt_f_flag ) { /// bad float suffix. E should be before F.
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexExpAfterFltSuffix;
+					goto lex_c_style_decimal_err;
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_C ) { /// not separating numbers.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexDigitSepNotSepDigits;
 					goto lex_c_style_decimal_err;
 				} else {
 					lit_flags |= flt_e_flag;
@@ -1039,6 +1113,17 @@ HARBOL_EXPORT int lex_c_style_decimal(const char str[], const char **const end, 
 				} else {
 					harbol_string_add_char(buf, chr);
 				}
+				lit_flags &= ~digit_sep;
+				break;
+			case DigitSep_C:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
+					harbol_string_add_char(buf, chr);
+					result = HarbolLexExtraDigitSeps;
+					goto lex_c_style_decimal_err;
+				} else {
+					harbol_string_add_char(buf, chr);
+					lit_flags |= digit_sep;
+				}
 				break;
 			default: /// bad digit/glyph.
 				harbol_string_add_char(buf, chr);
@@ -1052,13 +1137,16 @@ HARBOL_EXPORT int lex_c_style_decimal(const char str[], const char **const end, 
 	if( (lit_flags & flt_e_flag) && (str[-1]=='e'||str[-1]=='E') ) { /// float missing exponent!
 		result = HarbolLexNoNumAfterExp;
 		goto lex_c_style_decimal_err;
+	} else if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
+		goto lex_c_style_decimal_err;
 	}
 lex_c_style_decimal_err:;
 	*end = str;
 	return result;
 }
 
-HARBOL_EXPORT int lex_go_style_decimal(const char str[], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
+HARBOL_EXPORT int lex_go_style_decimal(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
 	int result = HarbolLexNoErr;
 	if( *str==0 ) {
 		return HarbolLexEoF;
@@ -1069,9 +1157,9 @@ HARBOL_EXPORT int lex_go_style_decimal(const char str[], const char **const end,
 		flt_e_flag = 1u << 1u,
 		got_exp_num = 1u << 2u,
 		math_op = 1u << 3u,
-		underscore_flag = 1u << 4u
+		digit_sep = 1u << 4u
 	;
-	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-' || *str=='_') ) {
+	while( *str != 0 && (isalnum(*str) || *str=='.' || *str=='+' || *str=='-' || *str==DigitSep_Go) ) {
 		const int_fast8_t chr = *str;
 		switch( chr ) {
 			case '.':
@@ -1080,9 +1168,9 @@ HARBOL_EXPORT int lex_go_style_decimal(const char str[], const char **const end,
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexExtraFltDot;
 					goto lex_go_style_decimal_err;
-				} else if( (lit_flags & underscore_flag) || str[1]=='_' ) { /// underscore before or after dot.
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_Go ) { /// digit sep before or after dot.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexUnderscoreNearDot;
+					result = HarbolLexDigitSepNearDot;
 					goto lex_go_style_decimal_err;
 				} else {
 					lit_flags |= flt_dot;
@@ -1109,9 +1197,9 @@ HARBOL_EXPORT int lex_go_style_decimal(const char str[], const char **const end,
 					harbol_string_add_char(buf, chr);
 					result = HarbolLexExtraExp;
 					goto lex_go_style_decimal_err;
-				} else if( (lit_flags & underscore_flag) || str[1]=='_' ) { /// not separating numbers.
+				} else if( (lit_flags & digit_sep) || str[1]==DigitSep_Go ) { /// not separating numbers.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexUnderscoreNotSepDigits;
+					result = HarbolLexDigitSepNotSepDigits;
 					goto lex_go_style_decimal_err;
 				} else {
 					lit_flags |= flt_e_flag;
@@ -1124,16 +1212,16 @@ HARBOL_EXPORT int lex_go_style_decimal(const char str[], const char **const end,
 					lit_flags |= got_exp_num;
 				}
 				harbol_string_add_char(buf, chr);
-				lit_flags &= ~underscore_flag;
+				lit_flags &= ~digit_sep;
 				break;
-			case '_':
-				if( lit_flags & underscore_flag ) { /// too many underscores.
+			case DigitSep_Go:
+				if( lit_flags & digit_sep ) { /// too many digit seps.
 					harbol_string_add_char(buf, chr);
-					result = HarbolLexExtraUnderscores;
+					result = HarbolLexExtraDigitSeps;
 					goto lex_go_style_decimal_err;
 				} else {
 					harbol_string_add_char(buf, chr);
-					lit_flags |= underscore_flag;
+					lit_flags |= digit_sep;
 				}
 				break;
 			default: /// bad digit/glyph.
@@ -1148,8 +1236,8 @@ HARBOL_EXPORT int lex_go_style_decimal(const char str[], const char **const end,
 	if( (lit_flags & flt_e_flag) && (str[-1]=='e'||str[-1]=='E') ) { /// e mark missing exponent!
 		result = HarbolLexNoNumAfterExp;
 		goto lex_go_style_decimal_err;
-	} else if( lit_flags & underscore_flag ) { /// underscores can only separate digits.
-		result = HarbolLexUnderscoreNotSepDigits;
+	} else if( lit_flags & digit_sep ) { /// digit seps can only separate digits.
+		result = HarbolLexDigitSepNotSepDigits;
 		goto lex_go_style_decimal_err;
 	}
 lex_go_style_decimal_err:;
@@ -1157,7 +1245,7 @@ lex_go_style_decimal_err:;
 	return result;
 }
 
-HARBOL_EXPORT int lex_c_style_number(const char str[], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
+HARBOL_EXPORT int lex_c_style_number(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
 	switch( *str ) {
 		case '0': {
 			switch( str[1] ) {
@@ -1178,7 +1266,7 @@ HARBOL_EXPORT int lex_c_style_number(const char str[], const char **const end, s
 	return HarbolLexNoErr;
 }
 
-HARBOL_EXPORT int lex_go_style_number(const char str[], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
+HARBOL_EXPORT int lex_go_style_number(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, bool *const restrict is_float) {
 	switch( *str ) {
 		case '0': {
 			switch( str[1] ) {
@@ -1278,7 +1366,7 @@ HARBOL_EXPORT int lex_go_style_str(const char str[static 1], const char **const 
 
 HARBOL_EXPORT const char *lex_get_err(const int err_code) {
 	switch( err_code ) {
-		case HarbolLexNoErr:                     return "No Lex Error.";
+		case HarbolLexNoErr:                     return "No Lexing Error.";
 		case HarbolLexEoF:                       return "Sudden End of File/Str.";
 		case HarbolLexMissing0:                  return "Missing initial '0'.";
 		case HarbolLexMissingX:                  return "Missing hex notation 'x'.";
@@ -1298,11 +1386,11 @@ HARBOL_EXPORT const char *lex_get_err(const int err_code) {
 		case HarbolLexBadGylph:                  return "Bad digit/gylph.";
 		case HarbolLexHexMissingDigits:          return "Hex literal missing digits.";
 		case HarbolLexHexNoDigitsB4Exp:          return "Missing at least one hex digit before exponent.";
-		case HarbolLexUnderscoreNearDot:         return "Underscore near dot.";
-		case HarbolLexUnderscoreNearExp:         return "Underscore near exponent mark.";
-		case HarbolLexExtraUnderscores:          return "Too many underscores.";
+		case HarbolLexDigitSepNearDot:           return "Digit Separator near dot.";
+		case HarbolLexDigitSepNearExp:           return "Digit Separator near exponent mark.";
+		case HarbolLexExtraDigitSeps:            return "Too many digit separators.";
 		case HarbolLexHexFltNoExp:               return "Hex float with no exponent.";
-		case HarbolLexUnderscoreMIADigits:       return "Underscore without digits.";
+		case HarbolLexDigitSepMIADigits:         return "Digit Saperator without digits.";
 		case HarbolLexExtraFltDot:               return "Too many float dots.";
 		case HarbolLexExtraFltSuffix:            return "Extra float suffix.";
 		case HarbolLexExtraExp:                  return "Extra exponent mark.";
@@ -1314,7 +1402,7 @@ HARBOL_EXPORT const char *lex_get_err(const int err_code) {
 		case HarbolLexBadHexChar:                return "Bad hex escape character.";
 		case HarbolLexBadUnicodeChar:            return "Bad unicode escape character.";
 		case HarbolLexSuddenEoFStr:              return "Sudden EoF in string.";
-		case HarbolLexUnderscoreNotSepDigits:    return "Underscore not separating digits.";
+		case HarbolLexDigitSepNotSepDigits:      return "Digit Separator not separating digits.";
 		default:                                 return "Unknown Lex error.";
 	}
 }
@@ -1327,21 +1415,73 @@ HARBOL_EXPORT bool lex_identifier(const char str[static 1], const char **const e
 	return buf->len > 0;
 }
 
+HARBOL_EXPORT NO_NULL bool lex_identifier_utf8(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, bool checker(int32_t c)) {
+	bool res = false;
+	while( *str != 0 ) {
+		int32_t rune = 0;
+		const size_t bytes = read_utf8(str, sizeof rune, &rune);
+		if( bytes==0 ) {
+			goto lex_id_u8_err;
+		} else if( checker(rune) ) {
+			write_utf8_str(buf, rune);
+		}
+		str += bytes;
+	}
+	res = buf->len > 0;
+lex_id_u8_err:
+	*end = str;
+	return res;
+}
+
 HARBOL_EXPORT bool lex_c_style_identifier(const char str[static 1], const char **const end, struct HarbolString *const restrict buf) {
-	if( !is_alphabetic(*str) )
+	if( !is_alphabetic(*str) ) {
 		return false;
-	
+	}
 	while( *str != 0 && is_possible_id(*str) ) {
+		harbol_string_add_char(buf, *str++);
+	}
+	*end = str;
+	return true;
+}
+
+HARBOL_EXPORT bool lex_until(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, const int32_t control) {
+	while( *str != 0 && *str != control ) {
 		harbol_string_add_char(buf, *str++);
 	}
 	*end = str;
 	return buf->len > 0;
 }
 
-HARBOL_EXPORT bool lex_until(const char str[static 1], const char **const end, struct HarbolString *const restrict buf, const int control) {
-	while( *str != 0 && *str != control ) {
-		harbol_string_add_char(buf, *str++);
-	}
-	*end = str;
-	return buf->len > 0;
+HARBOL_EXPORT intmax_t lex_c_string_to_int(const struct HarbolString *const buf, char **const end) {
+	const bool is_binary = !strncmp(buf->cstr, "0b", 2) || !strncmp(buf->cstr, "0B", 2);
+	const size_t extra = (is_binary)? 2 : 0;
+	return strtoll(&buf->cstr[extra], end, is_binary? 2 : 0);
+}
+
+HARBOL_EXPORT intmax_t lex_go_string_to_int(const struct HarbolString *const buf, char **const end) {
+	const bool is_octal  = !strncmp(buf->cstr, "0o", 2) || !strncmp(buf->cstr, "0O", 2);
+	const bool is_binary = !strncmp(buf->cstr, "0b", 2) || !strncmp(buf->cstr, "0B", 2);
+	const size_t extra = (is_octal || is_binary)? 2 : 0;
+	return strtoll(&buf->cstr[extra], end, is_octal? 8 : is_binary? 2 : 0);
+}
+
+
+HARBOL_EXPORT uintmax_t lex_c_string_to_uint(const struct HarbolString *const buf, char **const end) {
+	const bool is_binary = !strncmp(buf->cstr, "0b", 2) || !strncmp(buf->cstr, "0B", 2);
+	const size_t extra = (is_binary)? 2 : 0;
+	return strtoull(&buf->cstr[extra], end, is_binary? 2 : 0);
+}
+
+HARBOL_EXPORT uintmax_t lex_go_string_to_uint(const struct HarbolString *const buf, char **const end) {
+	const bool is_octal  = !strncmp(buf->cstr, "0o", 2) || !strncmp(buf->cstr, "0O", 2);
+	const bool is_binary = !strncmp(buf->cstr, "0b", 2) || !strncmp(buf->cstr, "0B", 2);
+	const size_t extra = (is_octal || is_binary)? 2 : 0;
+	return strtoull(&buf->cstr[extra], end, is_octal? 8 : is_binary? 2 : 0);
+}
+
+HARBOL_EXPORT floatmax_t lex_string_to_float(const struct HarbolString *const buf) {
+	const bool is_hex = !strncmp(buf->cstr, "0x", 2) || !strncmp(buf->cstr, "0X", 2);
+	floatmax_t f = 0;
+	harbol_string_scan(buf, is_hex? "%" SCNxfMAX "" : "%" SCNfMAX "", &f);
+	return f;
 }

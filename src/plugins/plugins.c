@@ -110,7 +110,7 @@ HARBOL_EXPORT void *harbol_plugin_get_obj(struct HarbolPlugin *const restrict pl
 		return NULL;
 	}
 	pl->err = HarbolPluginErrNone;
-	return( void* )( uintptr_t )MODULE_GET_OBJ(pl->dll, name);
+	return( void* )( uintptr_t )(MODULE_GET_OBJ(pl->dll, name));
 }
 
 
@@ -143,7 +143,7 @@ static NEVER_NULL(1) void _dir_open(tinydir_dir *const restrict dir, HarbolPlugi
 }
 
 HARBOL_EXPORT bool harbol_plugin_dir_open(const char dir[static 1], HarbolPluginDirEvent dir_fn, void *const restrict userdata, const char custom_ext[static 1]) {
-	/// 'FILENAME_MAX' defined in <stdio.h>
+	/// 'FILENAME_MAX' is defined in stdio.h
 	char currdir[FILENAME_MAX] = {0};
 #ifdef OS_WINDOWS
 	if( GetCurrentDirectory(sizeof currdir, currdir) != 0 )

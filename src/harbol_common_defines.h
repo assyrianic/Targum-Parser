@@ -353,14 +353,16 @@
 #	endif
 #endif
 
-#ifndef IN_BOUNDS
+
+#ifndef SIGN_EXTEND
 #	ifdef __cplusplus
-		template< typename T > static inline T _in_bounds(T val, T max, T min) {
-			return (val - min) <= (max - min);
+		template< typename T > static inline T _sign_extend(T val) {
+			const size_t sign_bit = 1 << ((sizeof val * CHAR_BIT) - 1);
+			return (val ^ sign_bit) - sign_bit;
 		}
-#		define IN_BOUNDS    _in_bounds
+#		define SIGN_EXTEND    _sign_extend
 #	else
-#		define IN_BOUNDS(val, max, min)    ( ((val) - (min)) <= ((max) - (min)) )
+#		define SIGN_EXTEND(val) (( (val) ^ (1u << ((sizeof val * CHAR_BIT) - 1u)) ) - (1u << ((sizeof val * CHAR_BIT) - 1u)))
 #	endif
 #endif
 

@@ -175,7 +175,7 @@ HARBOL_EXPORT bool harbol_deque_pop_front(struct HarbolDeque *const restrict deq
 	const size_t n = deque->head;
 	deque->head = deque->nodes[n].next;
 	deque->nodes[n].next = deque->nodes[n].prev = SIZE_MAX;
-
+	
 	memcpy(val, deque->nodes[n].data, datasize);
 	free(deque->nodes[n].data); deque->nodes[n].data = NULL;
 	
@@ -196,7 +196,7 @@ HARBOL_EXPORT bool harbol_deque_pop_back(struct HarbolDeque *const restrict dequ
 	const size_t n = deque->tail;
 	deque->tail = deque->nodes[n].prev;
 	deque->nodes[n].next = deque->nodes[n].prev = SIZE_MAX;
-
+	
 	memcpy(val, deque->nodes[n].data, datasize);
 	free(deque->nodes[n].data); deque->nodes[n].data = NULL;
 	

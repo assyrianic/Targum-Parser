@@ -57,7 +57,7 @@ HARBOL_EXPORT bool harbol_tuple_init(struct HarbolTuple *const tuple, const size
 	tuple->fields = harbol_array_make(sizeof(uint32_t), tuple->len, &( bool ){false});
 	uint32_t offset = 0;
 	for( size_t i=0; i<len; i++ ) {
-		const uint32_t size_pack = (( uint32_t )sizes[i] << 16) | offset;
+		const uint32_t size_pack = (( uint32_t )(sizes[i]) << 16) | offset;
 		harbol_array_insert(&tuple->fields, &size_pack, sizeof size_pack);
 		offset += sizes[i];
 		if( packed || len==1 )

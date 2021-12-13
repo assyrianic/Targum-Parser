@@ -289,3 +289,17 @@ HARBOL_EXPORT bool harbol_string_reverse(struct HarbolString *const str) {
 	}
 	return got_something;
 }
+
+
+HARBOL_EXPORT size_t harbol_string_rm_char(struct HarbolString *const str, const char c) {
+	size_t j = 0, counts = 0;
+	for( size_t i=0; str->cstr[i] != 0; i++ ) {
+		if( str->cstr[i] != c ) {
+			str->cstr[j++] = str->cstr[i];
+		} else {
+			counts++;
+		}
+	}
+	str->cstr[j] = 0;
+	return counts;
+}

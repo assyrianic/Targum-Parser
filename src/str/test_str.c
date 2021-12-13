@@ -141,6 +141,12 @@ void test_harbol_string(FILE *const debug_stream)
 	fputs(i.cstr, debug_stream);
 	fputs("\n", debug_stream);
 	
+	/// test string switch
+	fputs("\nstring :: test removing chars.\n", debug_stream);
+	
+	const size_t removed = harbol_string_rm_char(&i, 'l');
+	fprintf(debug_stream, "i's string: '%s', l's removed: %zu\n", i.cstr, removed);
+	
 	/// free data
 	fputs("string :: test destruction.", debug_stream);
 	fputs("\n", debug_stream);

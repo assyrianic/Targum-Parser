@@ -30,6 +30,7 @@ int main(void)
 
 void test_harbol_msg_sys(FILE *const debug_stream)
 {
+	( void )debug_stream;
 	size_t errc = 0, warnc = 0;
 	harbol_err_msg(&errc, "test err file 1", "big err", &( size_t ){1}, &( size_t ){0}, "big cheesery %f", 1.);
 	harbol_err_msg(&errc, "test err file 2", "baby err", NULL, NULL, "big cheesery %f", 2.);

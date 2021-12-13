@@ -17,3 +17,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_msg_sys_test
+	$(RM) harbol_msg_sys_output.txt
+
+run_test:
+	./harbol_msg_sys_test

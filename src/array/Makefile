@@ -17,3 +17,7 @@ test:
 clean:
 	$(RM) *.o
 	$(RM) harbol_array_test
+	$(RM) harbol_array_output.txt
+
+run_test:
+	./harbol_array_test
