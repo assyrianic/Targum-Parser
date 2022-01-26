@@ -10,7 +10,7 @@ Part of the Targum Compiler Frontend Suite, the Targum Parser is an string-confi
 * Produces a Parse Tree (Concrete Syntax Tree) that can be trimmed as needed into an Abstract Syntax Tree.
 
 ### TODO
-[ ] - allow for left-associativity without uncontrollable left recursion.
+* [ ] - allow for left-associativity without uncontrollable left recursion.
 
 ## Usage
 

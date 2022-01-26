@@ -26,6 +26,7 @@ extern "C" {
 /// token func assumes value of 0 is an invalid token.
 typedef bool        LexerStartUpFunc(void *userdata, const char filename[]);
 typedef bool        LexerShutDwnFunc(void *userdata, const char filename[]);
+
 typedef uint32_t    TokenFunc(void *userdata, size_t lookahead, size_t *line, size_t *col);
 typedef const char *LexemeFunc(void *userdata, size_t lookahead, size_t *line, size_t *col);
 typedef void        ConsumeFunc(void *userdata, size_t lookahead, bool consumed);
@@ -51,8 +52,8 @@ struct TargumParser {
 
 /// Targum 'Concrete Syntax Tree' aka a Parse Tree.
 struct TargumCST {
-	char  *parsed;
-	size_t len, tag;
+	char   *parsed;
+	size_t  len, tag;
 };
 
 TARGUM_API NEVER_NULL(1,2,3,4,5,6,7) struct TargumParser targum_parser_make(LexerStartUpFunc *startup_func, LexerShutDwnFunc *shutdown_fn, TokenFunc *token_func, LexemeFunc *lexeme_func, ConsumeFunc *consume_func, void *userdata, const char filename[], struct HarbolMap *cfg);

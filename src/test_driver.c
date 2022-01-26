@@ -24,7 +24,6 @@ static uint32_t targum_lexer_token(void *const userdata, const size_t lookahead,
 	const struct TargumLexer *const lexer = userdata;
 	const struct TargumTokenInfo *const ti = targum_lexer_peek_token(lexer, lookahead);
 	if( ti != NULL ) {
-		//printf("%s :: ti->tag - %u\n", __func__, ti->tag);
 		*line = ti->line;
 		*col  = ti->col;
 		return ti->tag;
@@ -32,11 +31,10 @@ static uint32_t targum_lexer_token(void *const userdata, const size_t lookahead,
 	return 0;
 }
 
-static const char *targum_lexer_cstr(void *const restrict userdata, const size_t lookahead, size_t *const restrict line, size_t *const restrict col) {
+static const char *targum_lexer_cstr(void *const userdata, const size_t lookahead, size_t *const restrict line, size_t *const restrict col) {
 	const struct TargumLexer     *const lexer = userdata;
 	const struct TargumTokenInfo *const ti    = targum_lexer_peek_token(lexer, lookahead);
 	if( ti != NULL ) {
-		//printf("%s :: ti->tag - %s\n", __func__, ti->lexeme.cstr);
 		*line = ti->line;
 		*col  = ti->col;
 		return ti->lexeme.cstr;
@@ -58,7 +56,7 @@ static void print_cst(struct HarbolTree *const tree, const size_t tabs, FILE *co
 	
 	struct TargumCST *cst = ( struct TargumCST* )(tree->data);
 	_print_tabs(tabs, f);
-	fprintf(f, "%s :: '%s'\n", cst->tag != SIZE_MAX? "token" : "rule", cst->parsed);
+	fprintf(f, "%s :: '%s'\n", (cst->tag != SIZE_MAX)? "token" : "rule", cst->parsed);
 	for( size_t i=0; i < tree->kids.len; i++ ) {
 		struct HarbolTree **kid = harbol_array_get(&tree->kids, i, sizeof *kid);
 		print_cst(*kid, tabs + 1, f);
@@ -73,7 +71,7 @@ int main(const int argc, char *restrict argv[restrict static 1])
 		return 1;
 	}
 	
-	struct TargumLexer tlexer = {0};
+	struct TargumLexer  tlexer  = {0};
 	struct TargumParser tparser = targum_parser_make(startup_targum_lexer, shutdown_targum_lexer, targum_lexer_token, targum_lexer_cstr, targum_lexer_consume, &tlexer, argv[1], NULL);
 	if( !targum_parser_init(&tparser) ) {
 		puts("Targum Parser Driver Error: failed to initialize parser.");
@@ -82,6 +80,7 @@ int main(const int argc, char *restrict argv[restrict static 1])
 		puts("Targum Parser Driver Error: failed to load grammar config.");
 		return 1;
 	}
+	
 	/// don't access 'token_cfg' when the parser is done running, it'll be invalidated.
 	const struct HarbolMap *token_cfg = targum_lexer_get_cfg(&tlexer);
 	if( token_cfg==NULL ) {
