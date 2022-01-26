@@ -1292,16 +1292,16 @@ TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parse
 		goto parser_cleanup;
 	}
 	
-	const uint32_t token_val = (*parser->lexer_iface.tok_fn)(parser->lexer_iface.userdata, 0, &( size_t ){0}, &( size_t ){0});
+	size_t line = 0, col = 0;
+	const uint32_t token_val = (*parser->lexer_iface.tok_fn)(parser->lexer_iface.userdata, 0, &line, &col);
 	if( token_val != 0 ) {
-		const char *tok_str = (*parser->lexer_iface.lexeme_fn)(parser->lexer_iface.userdata, 0, &( size_t ){0}, &( size_t ){0});
-		harbol_err_msg(NULL, parser->filename, "parse error", NULL, NULL, "unparsed, leftover tokens remaining '%s', freeing nodes...", tok_str);
+		const char *tok_str = (*parser->lexer_iface.lexeme_fn)(parser->lexer_iface.userdata, 0, &line, &col);
+		harbol_err_msg(NULL, parser->filename, "parse error", NULL, NULL, "unparsed, leftover tokens remaining '%s' at line: '%zu', col: '%zu', freeing nodes...", tok_str, line, col);
 		targum_parser_free_cst(&root);
 	}
 	
 	
 parser_cleanup:
-	/// cleanup.
 	for( size_t i=0; i < rules_cache.len; i++ ) {
 		struct MetaNode **const n = harbol_map_idx_get(&rules_cache, i);
 		metanode_free(n, false);
