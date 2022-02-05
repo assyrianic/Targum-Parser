@@ -1,3 +1,6 @@
-function fwrite (fmt, ...)
-	return io.write(string.format(fmt, unpack(arg)))
-end
+b[vert1, vert2];
+b[n : j];
+b[n];
+*p();
+(*p)();
+p.b.c.a();

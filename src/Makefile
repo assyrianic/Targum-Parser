@@ -2,7 +2,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic -std=c99 -flto -s -O2
 TFLAGS = -Wall -Wextra -pedantic -std=c99 -flto -g -O2
-# -fsanitize=undefined -fsplit-stack
+# -fsanitize=undefined -fsplit-stack -flto
 
 LIB_NAME = targum_parser
 DEPS = -ldl

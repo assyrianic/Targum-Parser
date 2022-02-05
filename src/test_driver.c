@@ -21,8 +21,8 @@ static bool shutdown_targum_lexer(void *const userdata, const char filename[stat
 }
 
 static uint32_t targum_lexer_token(void *const userdata, const size_t lookahead, size_t *const restrict line, size_t *const restrict col) {
-	const struct TargumLexer *const lexer = userdata;
-	const struct TargumTokenInfo *const ti = targum_lexer_peek_token(lexer, lookahead);
+	const struct TargumLexer     *const lexer = userdata;
+	const struct TargumTokenInfo *const ti    = targum_lexer_peek_token(lexer, lookahead);
 	if( ti != NULL ) {
 		*line = ti->line;
 		*col  = ti->col;
@@ -90,6 +90,7 @@ int main(const int argc, char *restrict argv[restrict static 1])
 	
 	{
 		const char *names[] = {
+			"invalid",
 			"comment",
 			"identifier",
 			"integer",
@@ -98,11 +99,11 @@ int main(const int argc, char *restrict argv[restrict static 1])
 			"rune",
 		};
 		const struct HarbolMap *const tokens = harbol_cfg_get_section(token_cfg, "tokens");
-		for( const char **iter=&names[0]; iter<1[&names]; iter++ ) {
+		for( const char **iter=&names[0]; iter < 1[&names]; iter++ ) {
 			const intmax_t *const val = harbol_cfg_get_int(tokens, *iter);
-			if( val==NULL )
+			if( val==NULL ) {
 				continue;
-			
+			}
 			targum_parser_define_token(&tparser, *iter, ( uint32_t )(*val));
 		}
 	}

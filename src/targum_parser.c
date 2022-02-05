@@ -59,8 +59,7 @@ NO_NULL enum MetaToken metalexer_get_token(struct MetaLexer *mlexer);
 
 enum MetaNodeType {
 	MetaNodeInvalid = 0,
-	MetaNodeRuleListExpr, ///  <a> <b> ... enumerator_list := <enumerator> [',' <enumerator_list>] ;
-	MetaNodeGroup,        /// (<a> <b>)
+	MetaNodeRuleListExpr, ///  <a> <b>, (<a> <b>) groups are parsed as rule lists. 
 	MetaNodeOpt,          /// [<a> <b>]
 	MetaNodeAlt,          /// <a> | <b>
 	MetaNodePlusExpr,     /// +
@@ -69,14 +68,13 @@ enum MetaNodeType {
 	MetaNodeNegLook,      /// !
 	MetaNodeLexToken,     /// i
 	MetaNodeReqToken,     /// 'if'
-	MetaNodeRuleExprStr,  /// <a>
-	MetaNodeRuleExprAST,  /// <a>
+	MetaNodeRuleExprStr,  /// "<a>"
+	MetaNodeRuleExprAST,  /// ptr to <a>
 };
 
 static inline const char *_get_metanode(const enum MetaNodeType tok) {
 	switch( tok ) {
 		case MetaNodeRuleListExpr: return "rule expr list";
-		case MetaNodeGroup:        return "group";
 		case MetaNodeOpt:          return "optional";
 		case MetaNodeAlt:          return "alternate";
 		case MetaNodePlusExpr:     return "one-or-more";
@@ -113,25 +111,38 @@ struct MetaNode *metanode_new_neg_look(struct MetaNode *expr);
 struct MetaNode *metanode_new_rule(const struct HarbolString *rule);
 struct MetaNode *metanode_new_lex_token(const struct HarbolString *tok);
 struct MetaNode *metanode_new_req_token(const struct HarbolString *tok);
-NO_NULL void metanode_free(struct MetaNode **nref, bool follow);
-void metanode_print(const struct MetaNode *n, size_t tabs);
+NO_NULL void     metanode_free(struct MetaNode **nref, bool follow);
+void             metanode_print(const struct MetaNode *n, size_t tabs, FILE *stream);
 
 
 /**
- * Grammar of the MetaAST:
- * <rule>       = +<alt_expr> ;
- * <alt_expr>   = <rep_expr> [('|' | '/') <alt_expr>] ;
- * <rep_expr>   = ['+' | '*' | '&' | '!'] <factor> ;
- * <group_expr> = '(' <rule> ')' ;
- * <opt_expr>   = '[' <rule> ']' ;
- * <factor>     = <terminal> | '<' IDEN '>' | <group_expr> | <opt_expr> ;
- * <terminal>   = "'" KEYWORD "'" | '"' KEYWORD '"' | LEX_TOKEN ;
+ * Think of the grammar as a cascading series of function calls & control flow.
+ * Control flow is delegated by expressions.
+ * All expressions result in a true or false value.
+ * Production Rule: `func rule(input []Token) bool; return rule()`
+ * Alt Expr:        `return expr1 || expr2`
+ * Kleene Plus:     `while( expr ) { res = true }, return res`
+ * Kleene Star:     `while( expr ); return true`
+ * Pos Lookahead:   `flag |= lookahead; return expr`
+ * Neg Lookahead:   `flag |= lookahead; return expr`
+ * Optional:        `do { res = expr[i] } while( res );`
+ *
+ */
+
+/**
+ * Grammar of the MetaAST Parser
+ * 
+ * rule     := sequence *( ('|' | '/') sequence ) .
+ * sequence := +rep .
+ * rep      := ['+' | '*' | '&' | '!'] factor .
+ * factor   := terminal | '<' IDEN '>' | '(' rule ')' | '[' rule ']' .
+ * terminal := "'" KEYWORD "'" | '"' KEYWORD '"' | '{' KEYWORD '}' .
  */
 typedef struct MetaNode *MetaParseFunc(struct MetaLexer *mlexer);
 
 MetaParseFunc
 	metaparser_parse_rule,
-	metaparser_parse_alt,
+	metaparser_parse_seq,
 	metaparser_parse_rep,
 	metaparser_parse_factor
 ;
@@ -229,41 +240,41 @@ enum MetaToken metalexer_get_token(struct MetaLexer *const mlexer)
 
 /**************************************************************************/
 
-/// <rule> = +<alt_expr> ;
-struct MetaNode *metaparser_parse_rule(struct MetaLexer *const mlexer)
-{
+/// rule := sequence *( ('|' | '/') sequence ) .
+struct MetaNode *metaparser_parse_rule(struct MetaLexer *const mlexer) {
 	metalexer_get_token(mlexer);
+	const enum MetaToken *t = &mlexer->token;
+	struct MetaNode *n = metaparser_parse_seq(mlexer);
+	while( *t==MetaTokenAlt ) {
+		metalexer_get_token(mlexer);
+		n = metanode_new_alt(n, metaparser_parse_seq(mlexer));
+	}
+	return n;
+}
+
+struct HarbolArray *_make_metanode_list(struct MetaLexer *const mlexer, MetaParseFunc *const func) {
 	struct HarbolArray *nodelist = harbol_array_new(sizeof(struct MetaNode*), ARRAY_DEFAULT_SIZE);
-	for( struct MetaNode *n = metaparser_parse_alt(mlexer); n != NULL; n = metaparser_parse_alt(mlexer) ) {
+	for( struct MetaNode *n = (*func)(mlexer); n != NULL; n = (*func)(mlexer) ) {
 		if( harbol_array_full(nodelist) && !harbol_array_grow(nodelist, sizeof(struct MetaNode*)) ) {
 			harbol_err_msg(NULL, "grammar", "memory error", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "Unable to grow node list. Aborting...");
 			abort();
 		}
 		harbol_array_insert(nodelist, &n, sizeof n);
 	}
-	
 	if( nodelist->len==0 ) {
 		harbol_warn_msg(NULL, "grammar", "critical warning", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "production '%s' produced an empty rule, freeing...", mlexer->key);
 		harbol_array_cleanup(&nodelist);
 	}
-	return metanode_new_listexpr(nodelist);
+	return nodelist;
 }
 
-/** <alt_expr> = <rep_expr> [('|' | '/') <alt_expr>] ; */
-struct MetaNode *metaparser_parse_alt(struct MetaLexer *const mlexer)
-{
-	const enum MetaToken *t = &mlexer->token;
-	struct MetaNode *n = metaparser_parse_rep(mlexer);
-	if( *t==MetaTokenAlt ) {
-		metalexer_get_token(mlexer);
-		return metanode_new_alt(n, metaparser_parse_alt(mlexer));
-	}
-	return n;
+/** sequence := +rep . */
+struct MetaNode *metaparser_parse_seq(struct MetaLexer *const mlexer) {
+	return metanode_new_listexpr(_make_metanode_list(mlexer, metaparser_parse_rep));
 }
 
-/** <rep_expr> = ['+' | '*' | '&' | '!'] <factor> ; */
-struct MetaNode *metaparser_parse_rep(struct MetaLexer *const mlexer)
-{
+/** rep := ['+' | '*' | '&' | '!'] factor . */
+struct MetaNode *metaparser_parse_rep(struct MetaLexer *const mlexer) {
 	const enum MetaToken *const t = &mlexer->token;
 	switch( *t ) {
 		case MetaTokenPlus:
@@ -284,15 +295,14 @@ struct MetaNode *metaparser_parse_rep(struct MetaLexer *const mlexer)
 }
 
 /**
- * <factor>   = <terminal> | '<' IDEN '>' | '{' IDEN '}' | '(' <rule> ')' | '[' <rule> ']' ;
- * <terminal> = "'" KEYWORD "'" | '"' KEYWORD '"' ;
+ * factor   := terminal | '<' IDEN '>' | '(' rule ')' | '[' rule ']' .
+ * terminal := "'" KEYWORD "'" | '"' KEYWORD '"' | '{' KEYWORD '}'   .
  */
-struct MetaNode *metaparser_parse_factor(struct MetaLexer *const mlexer)
-{
+struct MetaNode *metaparser_parse_factor(struct MetaLexer *const mlexer) {
 	const enum MetaToken *const t = &mlexer->token;
 	switch( *t ) {
 		case MetaTokenLParens: {
-			struct MetaNode *group = metanode_new_group(metaparser_parse_rule(mlexer));
+			struct MetaNode *group = metaparser_parse_rule(mlexer);
 			if( *t != MetaTokenRParens ) {
 				harbol_err_msg(&mlexer->errs, "grammar", "error", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "Missing right parens ')' in production '%s'!", mlexer->key);
 				metanode_free(&group, false);
@@ -327,6 +337,7 @@ struct MetaNode *metaparser_parse_factor(struct MetaLexer *const mlexer)
 			return rule;
 		}
 		default:
+			//harbol_warn_msg(NULL, "grammar", "critical warning", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "returning a NULL factor node in production '%s'", mlexer->key);
 			return NULL;
 	}
 }
@@ -338,15 +349,6 @@ struct MetaNode *metanode_new_listexpr(struct HarbolArray *const rule_list)
 	assert( n != NULL && "bad MetaNode rule list expression." );
 	n->node.node_list = rule_list;
 	n->tag = MetaNodeRuleListExpr;
-	return n;
-}
-
-struct MetaNode *metanode_new_group(struct MetaNode *const expr)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode group expression." );
-	n->node.node_expr = expr;
-	n->tag = MetaNodeGroup;
 	return n;
 }
 
@@ -434,9 +436,9 @@ struct MetaNode *metanode_new_req_token(const struct HarbolString *const tok)
 
 void metanode_free(struct MetaNode **const n, const bool follow)
 {
-	if( *n==NULL )
+	if( *n==NULL ) {
 		return;
-	
+	}
 	switch( (*n)->tag ) {
 		case MetaNodeRuleListExpr: {
 			struct HarbolArray *nodes = (*n)->node.node_list;
@@ -452,7 +454,6 @@ void metanode_free(struct MetaNode **const n, const bool follow)
 			metanode_free(&(*n)->node.alt_expr.r, follow);
 			break;
 		}
-		case MetaNodeGroup:
 		case MetaNodeOpt:
 		case MetaNodePlusExpr:
 		case MetaNodeStarExpr:
@@ -481,72 +482,78 @@ void metanode_free(struct MetaNode **const n, const bool follow)
 	free(*n); *n = NULL;
 }
 
-void metanode_print(const struct MetaNode *const n, const size_t tabs)
+void metanode_print(const struct MetaNode *const n, const size_t tabs, FILE *const stream)
 {
-	if( n==NULL )
+	if( n==NULL ) {
 		return;
-	
-	_print_tabs(tabs, stdout);
+	}
+	_print_tabs(tabs, stream);
 	switch( n->tag ) {
 		case MetaNodeRuleListExpr: {
-			puts("metanode :: rule list expr");
+			fprintf(stream, "(%p) metanode :: rule list expr\n", ( const void* )(n));
 			const struct HarbolArray *const arr = n->node.node_list;
 			for( size_t i=0; i < arr->len; i++ ) {
 				struct MetaNode **p = harbol_array_get(arr, i, sizeof *p);
-				metanode_print(*p, tabs + 1);
+				metanode_print(*p, tabs + 1, stream);
 			}
 			break;
 		}
 		case MetaNodeAlt:
-			puts("metanode :: alternate expr, printing left");
-			metanode_print(n->node.alt_expr.l, tabs + 1);
-			_print_tabs(tabs, stdout);
-			puts("metanode :: alternate expr, printing right");
-			metanode_print(n->node.alt_expr.r, tabs + 1);
-			break;
-		case MetaNodeGroup:
-			puts("metanode :: group expr");
-			metanode_print(n->node.node_expr, tabs + 1);
+			fprintf(stream, "(%p) metanode :: alternate expr, printing left\n", ( const void* )(n));
+			metanode_print(n->node.alt_expr.l, tabs + 1, stream);
+			_print_tabs(tabs, stream);
+			fputs("metanode :: alternate expr, printing right\n", stream);
+			metanode_print(n->node.alt_expr.r, tabs + 1, stream);
 			break;
 		case MetaNodeOpt:
-			puts("metanode :: optional expr");
-			metanode_print(n->node.node_expr, tabs + 1);
+			fprintf(stream, "(%p) metanode :: optional expr\n", ( const void* )(n));
+			metanode_print(n->node.node_expr, tabs + 1, stream);
 			break;
 		case MetaNodePlusExpr:
-			puts("metanode :: one-or-more expr");
-			metanode_print(n->node.node_expr, tabs + 1);
+			fprintf(stream, "(%p) metanode :: one-or-more expr\n", ( const void* )(n));
+			metanode_print(n->node.node_expr, tabs + 1, stream);
 			break;
 		case MetaNodeStarExpr:
-			puts("metanode :: zero-or-more expr");
-			metanode_print(n->node.node_expr, tabs + 1);
+			fprintf(stream, "(%p) metanode :: zero-or-more expr\n", ( const void* )(n));
+			metanode_print(n->node.node_expr, tabs + 1, stream);
 			break;
 		case MetaNodePosLook:
-			puts("metanode :: positive lookahead expr");
-			metanode_print(n->node.node_expr, tabs + 1);
+			fprintf(stream, "(%p) metanode :: positive lookahead expr\n", ( const void* )(n));
+			metanode_print(n->node.node_expr, tabs + 1, stream);
 			break;
 		case MetaNodeNegLook:
-			puts("metanode :: negative lookahead expr");
-			metanode_print(n->node.node_expr, tabs + 1);
+			fprintf(stream, "(%p) metanode :: negative lookahead expr\n", ( const void* )(n));
+			metanode_print(n->node.node_expr, tabs + 1, stream);
 			break;
 		case MetaNodeLexToken:
-			printf("metanode :: lex token expr: '%s'\n", n->node.token_expr.cstr);
+			fprintf(stream, "(%p) metanode :: lex token expr: '%s'\n", ( const void* )(n), n->node.token_expr.cstr);
 			break;
 		case MetaNodeReqToken:
-			printf("metanode :: required token expr: '%s'\n", n->node.token_expr.cstr);
+			fprintf(stream, "(%p) metanode :: required token expr: '%s'\n", ( const void* )(n), n->node.token_expr.cstr);
 			break;
 		case MetaNodeRuleExprStr:
-			printf("metanode :: rule string expr: '%s'\n", n->node.token_expr.cstr);
+			fprintf(stream, "(%p) metanode :: rule string expr: '%s'\n", ( const void* )(n), n->node.token_expr.cstr);
 			break;
 		case MetaNodeRuleExprAST:
-			printf("metanode :: rule node expr: '%p'\n", ( void* )(n->node.node_expr));
+			fprintf(stream, "(%p) metanode :: rule node expr: '%p'\n", ( const void* )(n), ( void* )(n->node.node_expr));
 			break;
 		
 		case MetaNodeInvalid:
 		default:
-			puts("metanode :: invalid expr");
+			fprintf(stream, "(%p) metanode :: invalid expr\n", ( const void* )(n));
 			break;
 	}
 }
+
+void print_rules(const struct HarbolMap *const rules, FILE *const stream) {
+	for( size_t i=0; i < rules->len; i++ ) {
+		const struct MetaNode **n = harbol_map_idx_get(rules, i);
+		const char *key = harbol_map_key_val(rules, n, sizeof n, &( size_t ){0});
+		fprintf(stream, "rule :: '%s'\n", key);
+		metanode_print(*n, 0, stream);
+	}
+}
+
 
 /// effectively transforms the ASTs into a directed (cyclical) graph.
 static void _attach_rule_metanodes(struct MetaNode *const n, const struct HarbolMap *const rules) {
@@ -567,7 +574,7 @@ static void _attach_rule_metanodes(struct MetaNode *const n, const struct Harbol
 			_attach_rule_metanodes(n->node.alt_expr.r, rules);
 			break;
 		
-		case MetaNodeGroup:    case MetaNodeOpt:
+		case MetaNodeOpt:
 		case MetaNodePlusExpr: case MetaNodeStarExpr:
 		case MetaNodePosLook:  case MetaNodeNegLook:
 			_attach_rule_metanodes(n->node.node_expr, rules);
@@ -579,6 +586,8 @@ static void _attach_rule_metanodes(struct MetaNode *const n, const struct Harbol
 				harbol_string_clear(&n->node.token_expr);
 				n->node.node_expr = *rule;
 				n->tag = MetaNodeRuleExprAST;
+			} else {
+				harbol_err_msg(NULL, "grammar", "runtime error", NULL, NULL, "Undefined rule '%s'", n->node.token_expr.cstr);
 			}
 			break;
 		}
@@ -607,7 +616,7 @@ static void _get_rule_deps(const struct HarbolMap *const rules, const struct Har
 			_get_rule_deps(rules, deps, n->node.alt_expr.r, curr_rule);
 			break;
 		
-		case MetaNodeGroup:    case MetaNodeOpt:
+		case MetaNodeOpt:
 		case MetaNodePlusExpr: case MetaNodeStarExpr:
 		case MetaNodePosLook:  case MetaNodeNegLook:
 			_get_rule_deps(rules, deps, n->node.node_expr, curr_rule);
@@ -718,7 +727,7 @@ static bool _has_cycle(const struct MetaNode *const n, const struct MetaNode *co
 			const bool r = _has_cycle(n->node.alt_expr.r, rule, seen);
 			return l || r;
 		}
-		case MetaNodeGroup:    case MetaNodeOpt:
+		case MetaNodeOpt:
 		case MetaNodePlusExpr: case MetaNodeStarExpr:
 		case MetaNodePosLook:  case MetaNodeNegLook:
 			return _has_cycle(n->node.node_expr, rule, seen);
@@ -764,6 +773,7 @@ static void _check_inf_loop(struct HarbolMap *const rules, bool *const restrict 
 }
 /**************************************************************************/
 
+
 enum /** ParseFlags */ {
 	FlagAlt,  FlagOpt,
 	FlagPlus, FlagStar,
@@ -804,10 +814,7 @@ static NO_NULL struct HarbolTree *_targum_parser_new_cst(const char node_cstr[st
 }
 
 
-//#define DEBUG
-#ifdef DEBUG
-#	include <unistd.h>
-#endif
+
 
 enum ParseRes {
 	ParseResFail, /// production failed hard.
@@ -825,7 +832,7 @@ enum ParseRes _targum_parser_exec_meta_ast(
 	const char *const rule_key = harbol_map_key_val(state->rules, &rule, sizeof rule, &( size_t ){0});
 	
 	if( state->rule_trace != NULL ) {
-		fprintf(state->rule_trace, "rule :: '%s', MetaAST tag: '%s'\n", rule_key, _get_metanode(ast->tag));
+		fprintf(state->rule_trace, "rule :: '%s', MetaAST tag: '%s', MetaAST ptr: '%p'\n", rule_key, _get_metanode(ast->tag), ( const void* )(ast));
 	}
 	
 	state->iterations++;
@@ -842,19 +849,15 @@ enum ParseRes _targum_parser_exec_meta_ast(
 		return ParseResFail;
 	}
 	
-#ifdef DEBUG
-	usleep(200000);
-	printf("%s :: ast->tag - '%s' | rule - '%s'\n", __func__, _get_metanode(ast->tag), rule_key);
-#endif
 	switch( ast->tag ) {
 		case MetaNodeInvalid: {
-			harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "Invalid MetaNode! rule: '%s'", rule_key);
+			harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "Invalid MetaNode! rule: '%s' | ast: '%p'", rule_key, ( const void* )(ast));
 			return ParseResFail;
 		}
-		case MetaNodeRuleListExpr:
-		case MetaNodeGroup: {
-			const struct HarbolArray *const rule_list = ( ast->tag==MetaNodeGroup )? ast->node.node_expr->node.node_list : ast->node.node_list;
-			if( rule_list==NULL ) {
+		case MetaNodeRuleListExpr: {
+			const struct HarbolArray *const rule_list = ast->node.node_list;
+			if( rule_list==NULL || rule_list->len==0 ) {
+				harbol_warn_msg(NULL, state->filename, "runtime warning", NULL, NULL, "rule sequence node for rule '%s' has bad node list.", rule_key);
 				return ParseResOk;
 			}
 			
@@ -872,23 +875,8 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			const size_t saved_lookahead = state->curr_lookahead;
 			const size_t kids = harbol_tree_len(root);
 			
-			const struct HarbolArray *const list = ast->node.node_expr->node.node_list;
-			if( list==NULL || list->len==0 ) {
-				return ParseResOk;
-			}
-			
 			state->flags[FlagOpt]++;
-			const struct MetaNode **node = harbol_array_get(list, 0, sizeof *node);
-			enum ParseRes res = _targum_parser_exec_meta_ast(state, *node, rule, root);
-			if( res==ParseResFail ) {
-				return ParseResGood;
-			}
-			for( size_t i=1; i < list->len; i++ ) {
-				node = harbol_array_get(list, i, sizeof *node);
-				if( (res = _targum_parser_exec_meta_ast(state, *node, rule, root))==ParseResFail ) {
-					break;
-				}
-			}
+			const enum ParseRes res = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
 			state->flags[FlagOpt]--;
 			if( res==ParseResFail ) {
 				if( state->curr_lookahead > saved_lookahead ) {
@@ -1084,7 +1072,7 @@ TARGUM_API struct TargumParser targum_parser_make(
 	LexemeFunc       *const lexeme_func,
 	ConsumeFunc      *const consume_func,
 	void             *const userdata,
-	const char        filename[static 1],
+	const char              filename[static 1],
 	struct HarbolMap *const cfg
 ) {
 	return ( struct TargumParser ){
@@ -1255,6 +1243,16 @@ TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parse
 		}
 	}
 	
+	bool print_rule_tree = false;
+	{
+		const bool *const _print_rules = harbol_cfg_get_bool(parser->cfg, "settings.print rule tree");
+		if( _print_rules != NULL ) {
+			print_rule_tree = *_print_rules;
+		} else {
+			harbol_warn_msg(NULL, parser->filename, "system warning", NULL, NULL, "'print rule tree' key missing in parser settings section, defaulting to rule printing disabled.");
+		}
+	}
+	
 	struct TargumParseState state = {
 		.parser         =  parser,
 		.rules          = &rules_cache,
@@ -1279,8 +1277,19 @@ TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parse
 			case ParseResGood: str_parse_res = "Success"; break;
 			case ParseResOk:   str_parse_res = "Ok";      break;
 		}
-		fprintf(state.rule_trace, "final parse result :: '%s'\n", str_parse_res);
+		fprintf(state.rule_trace, "final parse result :: '%s'", str_parse_res);
 		fclose(state.rule_trace); state.rule_trace = NULL;
+	}
+	
+	if( print_rule_tree ) {
+		FILE *rule_tree = fopen("targum_parser_rule_tree.txt", "w");
+		for( size_t i=0; i < rules_cache.len; i++ ) {
+			const char *key_name = ( const char* )(rules_cache.keys[i]);
+			const struct MetaNode **const n = harbol_map_idx_get(&rules_cache, i);
+			fprintf(rule_tree, "\nprinting MetaAST '%s' (%p):\n", key_name, ( const void* )(*n));
+			metanode_print(*n, 0, rule_tree);
+		}
+		fclose(rule_tree); rule_tree = NULL;
 	}
 	
 	if( parse_res==ParseResFail || harbol_tree_len(root)==0 ) {
