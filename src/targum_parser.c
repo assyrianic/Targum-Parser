@@ -59,17 +59,17 @@ NO_NULL enum MetaToken metalexer_get_token(struct MetaLexer *mlexer);
 
 enum MetaNodeType {
 	MetaNodeInvalid = 0,
-	MetaNodeRuleListExpr, ///  <a> <b>, (<a> <b>) groups are parsed as rule lists. 
+	MetaNodeRuleListExpr, /// <a> <b>, (<a> <b>) groups are parsed as rule lists. 
 	MetaNodeOpt,          /// [<a> <b>]
 	MetaNodeAlt,          /// <a> | <b>
 	MetaNodePlusExpr,     /// +
 	MetaNodeStarExpr,     /// *
 	MetaNodePosLook,      /// &
 	MetaNodeNegLook,      /// !
-	MetaNodeLexToken,     /// i
+	MetaNodeLexToken,     /// {identifier}
 	MetaNodeReqToken,     /// 'if'
 	MetaNodeRuleExprStr,  /// "<a>"
-	MetaNodeRuleExprAST,  /// ptr to <a>
+	MetaNodeRuleExprAST,  /// ptr to <a> node
 };
 
 static inline const char *_get_metanode(const enum MetaNodeType tok) {
@@ -114,20 +114,6 @@ struct MetaNode *metanode_new_req_token(const struct HarbolString *tok);
 NO_NULL void     metanode_free(struct MetaNode **nref, bool follow);
 void             metanode_print(const struct MetaNode *n, size_t tabs, FILE *stream);
 
-
-/**
- * Think of the grammar as a cascading series of function calls & control flow.
- * Control flow is delegated by expressions.
- * All expressions result in a true or false value.
- * Production Rule: `func rule(input []Token) bool; return rule()`
- * Alt Expr:        `return expr1 || expr2`
- * Kleene Plus:     `while( expr ) { res = true }, return res`
- * Kleene Star:     `while( expr ); return true`
- * Pos Lookahead:   `flag |= lookahead; return expr`
- * Neg Lookahead:   `flag |= lookahead; return expr`
- * Optional:        `do { res = expr[i] } while( res );`
- *
- */
 
 /**
  * Grammar of the MetaAST Parser
@@ -598,6 +584,7 @@ static void _attach_rule_metanodes(struct MetaNode *const n, const struct Harbol
 	}
 }
 
+/// 
 static void _get_rule_deps(const struct HarbolMap *const rules, const struct HarbolMap *const deps, const struct MetaNode *n, const size_t curr_rule) {
 	if( n==NULL ) {
 		return;
@@ -625,6 +612,10 @@ static void _get_rule_deps(const struct HarbolMap *const rules, const struct Har
 		case MetaNodeRuleExprAST: {
 			const struct MetaNode **const rule_ref = harbol_map_idx_get(rules, curr_rule);
 			struct HarbolMap *const restrict set = harbol_map_key_get(deps, rule_ref, sizeof *rule_ref);
+			/*{
+				const char *subkey = harbol_map_key_val(rules, rule_ref, sizeof *rule_ref, &( size_t ){0});
+				printf("\t_get_rule_deps :: rule '%s'\n", subkey);
+			}*/
 			const bool set_value = false;
 			harbol_map_key_set(set, &n->node.node_expr, sizeof n->node.node_expr, &set_value, sizeof set_value);
 			break;
@@ -638,12 +629,12 @@ static void _get_rule_deps(const struct HarbolMap *const rules, const struct Har
 
 static void _prune_unused_rules(struct HarbolMap *const rules) {
 	/** Credit to `devast8a` for algorithm.
-	seen, working = {root}, {root}
-	while working is non empty:
-		current = pop item from working
-		for every subrule directly reachable in current:
-			if subrule is not in seen:
-				add subrule to seen and to working
+		seen, working = {root}, {root}
+		while working is non empty:
+			current = pop item from working
+			for every subrule directly reachable in current:
+				if subrule is not in seen:
+					add subrule to seen and to working
 	 */
 	bool throwaway = false;
 	struct HarbolMap deps = harbol_map_make(8, &throwaway);
@@ -655,7 +646,7 @@ static void _prune_unused_rules(struct HarbolMap *const rules) {
 	}
 	
 	struct HarbolMap   seen    = harbol_map_make(8, &throwaway);
-	struct HarbolArray working = harbol_array_make(sizeof(const struct MetaNode*), 0, &throwaway);
+	struct HarbolArray working = harbol_array_make(sizeof(struct MetaNode*), rules->len, &throwaway);
 	const struct MetaNode **const root = harbol_map_idx_get(rules, 0);
 	harbol_map_insert(&seen, root, sizeof *root, &throwaway, sizeof throwaway);
 	harbol_array_append(&working, root, sizeof *root);
@@ -666,24 +657,29 @@ static void _prune_unused_rules(struct HarbolMap *const rules) {
 		for( size_t i=0; i < deps_set->len; i++ ) {
 			const struct MetaNode **const subrule = ( const struct MetaNode** )(deps_set->keys[i]);
 			if( !harbol_map_has_key(&seen, subrule, sizeof *subrule) ) {
-				harbol_map_insert(&seen, subrule, sizeof *subrule, &throwaway, sizeof throwaway);
+				harbol_map_key_set(&seen, subrule, sizeof *subrule, &throwaway, sizeof throwaway);
+				if( harbol_array_full(&working) ) {
+					harbol_array_grow(&working, sizeof(struct MetaNode*));
+				}
 				harbol_array_append(&working, subrule, sizeof *subrule);
 			}
 		}
 	}
 	harbol_array_clear(&working);
 	for( size_t i=0; i < deps.len; i++ ) {
-		struct HarbolMap *set = harbol_map_idx_get(&deps, i);
+		struct HarbolMap *const set = harbol_map_idx_get(&deps, i);
 		harbol_map_clear(set);
 	}
 	harbol_map_clear(&deps);
 	
+	size_t deleted = 0;
 	for( size_t i = rules->len - 1; i < rules->len; i-- ) {
 		struct MetaNode **const n = harbol_map_idx_get(rules, i);
 		if( !harbol_map_has_key(&seen, n, sizeof *n) ) {
 			metanode_free(n, false);
 			harbol_map_idx_rm(rules, i);
 			i = rules->len;
+			deleted++;
 		}
 	}
 	harbol_map_clear(&seen);
@@ -777,7 +773,7 @@ static void _check_inf_loop(struct HarbolMap *const rules, bool *const restrict 
 enum /** ParseFlags */ {
 	FlagAlt,  FlagOpt,
 	FlagPlus, FlagStar,
-	FlagPos,  FlagNeg,
+	FlagLookAhead,
 	MaxParseFlags,
 };
 
@@ -787,7 +783,8 @@ struct TargumParseState {
 	FILE                    *rule_trace;
 	const char              *filename;
 	const struct LexerIFace *lexer_pipe;
-	size_t                   iterations, curr_lookahead, max_iterations;
+	size_t                   iterations, curr_lookahead, max_iterations, tokens_consumed;
+	
 	/**
 	 * rules can nest the same grammar expression types.
 	 * example: '[ (<a> *<b>) <c> [+<d>] ]'.
@@ -812,8 +809,6 @@ static NO_NULL struct HarbolTree *_targum_parser_new_cst(const char node_cstr[st
 	}
 	return harbol_tree_new(&cst, sizeof cst);
 }
-
-
 
 
 enum ParseRes {
@@ -855,6 +850,7 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			return ParseResFail;
 		}
 		case MetaNodeRuleListExpr: {
+			/// Returns result as it is.
 			const struct HarbolArray *const rule_list = ast->node.node_list;
 			if( rule_list==NULL || rule_list->len==0 ) {
 				harbol_warn_msg(NULL, state->filename, "runtime warning", NULL, NULL, "rule sequence node for rule '%s' has bad node list.", rule_key);
@@ -871,33 +867,44 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			return res;
 		}
 		case MetaNodeOpt: {
-			/// Optional expressions use a form of look-ahead.
-			const size_t saved_lookahead = state->curr_lookahead;
-			const size_t kids = harbol_tree_len(root);
+			/// On failure, optional expressions must backtrack the lexer
+			/// and remove any parsed CSTs but returns success.
+			const size_t saved_lookahead   = state->curr_lookahead;
+			const size_t saved_token_count = state->tokens_consumed;
+			const size_t kids = root->kids.len;
 			
 			state->flags[FlagOpt]++;
 			const enum ParseRes res = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
 			state->flags[FlagOpt]--;
+			/// if we failed BUT the optional consumed tokens, fail hard.
 			if( res==ParseResFail ) {
-				if( state->curr_lookahead > saved_lookahead ) {
-					const size_t child_count = harbol_tree_len(root);
+				if( state->tokens_consumed > saved_token_count ) {
+					harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "optional expression in rule '%s' passed then failed to complete.", rule_key);
+					return res;
+				} else if( state->curr_lookahead > saved_lookahead ) {
+					const size_t child_count = root->kids.len;
 					if( child_count > kids ) {
 						for( size_t i=0; i < (child_count - kids); i++ ) {
-							const size_t idx = harbol_tree_len(root) - 1;
+							const size_t idx = root->kids.len - 1;
 							struct HarbolTree *const cst_node = harbol_tree_get_node_by_index(root, idx);
-							struct TargumCST  *const cst = harbol_tree_get(cst_node);
+							struct TargumCST *const cst = harbol_tree_get(cst_node);
 							free(cst->parsed); cst->parsed = NULL;
 							harbol_tree_rm_index(root, idx);
 						}
 					}
+					state->curr_lookahead = saved_lookahead;
 				}
-				state->curr_lookahead = saved_lookahead;
 			}
 			return ParseResGood;
 		}
 		case MetaNodeAlt: {
-			const size_t saved_lookahead = state->curr_lookahead;
-			const size_t kids = harbol_tree_len(root);
+			/// On failure, alt expressions must backtrack the lexer
+			/// remove any parsed CSTs, then try the rightward node.
+			/// returns result as is.
+			const size_t saved_lookahead   = state->curr_lookahead;
+			const size_t saved_token_count = state->tokens_consumed;
+			const size_t kids = root->kids.len;
+			
 			state->flags[FlagAlt]++;
 			const enum ParseRes result = _targum_parser_exec_meta_ast(state, ast->node.alt_expr.l, rule, root);
 			state->flags[FlagAlt]--;
@@ -905,10 +912,10 @@ enum ParseRes _targum_parser_exec_meta_ast(
 				return result;
 			} else {
 				if( state->curr_lookahead > saved_lookahead ) {
-					const size_t child_count = harbol_tree_len(root);
+					const size_t child_count = root->kids.len;
 					if( child_count > kids ) {
 						for( size_t i=0; i < (child_count - kids); i++ ) {
-							const size_t idx = harbol_tree_len(root) - 1;
+							const size_t idx = root->kids.len - 1;
 							struct HarbolTree *const cst_node = harbol_tree_get_node_by_index(root, idx);
 							struct TargumCST *const cst = harbol_tree_get(cst_node);
 							free(cst->parsed); cst->parsed = NULL;
@@ -916,12 +923,14 @@ enum ParseRes _targum_parser_exec_meta_ast(
 						}
 					}
 				}
-				state->curr_lookahead = saved_lookahead;
+				state->curr_lookahead  = saved_lookahead;
+				state->tokens_consumed = saved_token_count;
 				return _targum_parser_exec_meta_ast(state, ast->node.alt_expr.r, rule, root);
 			}
 		}
 		
 		case MetaNodePlusExpr: {
+			/// returns success if at least one expression returned success.
 			enum ParseRes res = ParseResFail;
 			state->flags[FlagPlus]++;
 			while( _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root)==ParseResGood ) {
@@ -931,6 +940,7 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			return res;
 		}
 		case MetaNodeStarExpr: {
+			/// always returns success.
 			state->flags[FlagStar]++;
 			while( _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root)==ParseResGood );
 			state->flags[FlagStar]--;
@@ -938,17 +948,17 @@ enum ParseRes _targum_parser_exec_meta_ast(
 		}
 		
 		case MetaNodePosLook: {
-			state->flags[FlagPos]++;
+			state->flags[FlagLookAhead]++;
 			const enum ParseRes result = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
 			state->curr_lookahead = 0;
-			state->flags[FlagPos]--;
+			state->flags[FlagLookAhead]--;
 			return result;
 		}
 		case MetaNodeNegLook: {
-			state->flags[FlagNeg]++;
+			state->flags[FlagLookAhead]++;
 			const enum ParseRes result = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
 			state->curr_lookahead = 0;
-			state->flags[FlagNeg]--;
+			state->flags[FlagLookAhead]--;
 			return !result;
 		}
 		
@@ -965,30 +975,38 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			  , col  = 0
 			;
 			const uint32_t tok_val = (*lex->tok_fn)(lex->userdata, state->curr_lookahead, &line, &col);
-			const char    *tok_str = (*lex->lexeme_fn)(lex->userdata, state->curr_lookahead, &line, &col);
+			struct {
+				const char *str;
+				size_t      len;
+			} tok = {0};
+			tok.str = (*lex->lexeme_fn)(lex->userdata, state->curr_lookahead, &line, &col, &tok.len);
 			if( tok_val==0 ) {
+				/// got invalid/EOF token?
 				return ParseResFail;
 			} else if( *lex_tok_val != tok_val ) {
-				if( !state->flags[FlagPlus] && !state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagPos] && !state->flags[FlagNeg] ) {
-					harbol_err_msg(NULL, state->filename, "syntax error", &line, &col, "Expected '%s' but got '%s'", lit_str->cstr, tok_str);
+				if( !state->flags[FlagPlus] && !state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagLookAhead] ) {
+					harbol_err_msg(NULL, state->filename, "syntax error", &line, &col, "Expected '%s' but got '%.*s'", lit_str->cstr, ( int )(tok.len), tok.str);
 				}
 				return ParseResFail;
 			}
 			
 			/// we're not in the look-ahead expressions, consume the token!
-			const bool consume = !state->flags[FlagPos] && !state->flags[FlagNeg];
+			const bool consume = !state->flags[FlagLookAhead];
 			if( consume ) {
 				state->iterations = 0;
 				struct TargumCST cst = {
-					.parsed = dup_str(tok_str),
-					.len    = strlen(tok_str),
+					.parsed = calloc(tok.len + 1, sizeof(char)),
+					.len    = tok.len,
 					.tag    = tok_val
 				};
 				if( cst.parsed==NULL ) {
 					harbol_err_msg(NULL, state->filename, "memory error", &line, &col, "Unable to allocate CST Node for lexical token!");
 					return ParseResFail;
 				}
+				strncpy(cst.parsed, tok.str, tok.len);
+				cst.parsed[tok.len] = 0;
 				harbol_tree_insert_val(root, &cst, sizeof cst);
+				state->tokens_consumed++;
 			} else {
 				state->curr_lookahead++;
 			}
@@ -1002,26 +1020,34 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			  , col  = 0
 			;
 			const uint32_t tok_val = (*lex->tok_fn)(lex->userdata, state->curr_lookahead, &line, &col);
-			const char    *tok_str = (*lex->lexeme_fn)(lex->userdata, state->curr_lookahead, &line, &col);
-			if( tok_val==0 || harbol_string_cmpcstr(lit_str, tok_str) ) {
-				if( /*!state->flags[FlagPlus] && */!state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagPos] && !state->flags[FlagNeg] ) {
-					harbol_err_msg(NULL, state->filename, "syntax error", &line, &col, "Expected '%s' but got '%s'", lit_str->cstr, tok_str);
+
+			struct {
+				const char *str;
+				size_t      len;
+			} tok = {0};
+			tok.str = (*lex->lexeme_fn)(lex->userdata, state->curr_lookahead, &line, &col, &tok.len);
+			if( tok_val==0 || strncmp(lit_str->cstr, tok.str, tok.len) ) {
+				if( /*!state->flags[FlagPlus] && */!state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagLookAhead] ) {
+					harbol_err_msg(NULL, state->filename, "syntax error", &line, &col, "Expected '%s' but got '%.*s'", lit_str->cstr, ( int )(tok.len), tok.str);
 				}
 				return ParseResFail;
 			}
-			const bool consume = !state->flags[FlagPos] && !state->flags[FlagNeg];
+			const bool consume = !state->flags[FlagLookAhead];
 			if( consume ) {
 				state->iterations = 0;
 				struct TargumCST cst = {
-					.parsed = dup_str(tok_str),
-					.len    = strlen(tok_str),
+					.parsed = calloc(tok.len + 1, sizeof(char)),
+					.len    = tok.len,
 					.tag    = tok_val
 				};
 				if( cst.parsed==NULL ) {
 					harbol_err_msg(NULL, state->filename, "memory error", &line, &col, "Unable to allocate CST Node for required token!");
 					return ParseResFail;
 				}
+				strncpy(cst.parsed, tok.str, tok.len);
+				cst.parsed[tok.len] = 0;
 				harbol_tree_insert_val(root, &cst, sizeof cst);
+				state->tokens_consumed++;
 			} else {
 				state->curr_lookahead++;
 			}
@@ -1035,7 +1061,7 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			const char *const subrule_key = harbol_map_key_val(state->rules, &subrule, sizeof subrule, &key_len);
 			struct HarbolTree *subchild = _targum_parser_new_cst(subrule_key, key_len);
 			if( subchild==NULL ) {
-				if( !state->flags[FlagPlus] && !state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagPos] && !state->flags[FlagNeg] ) {
+				if( !state->flags[FlagPlus] && !state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagLookAhead] ) {
 					harbol_err_msg(NULL, state->filename, "memory error", NULL, NULL, "Failed to allocate tree for rule '%s'", subrule_key);
 				}
 				return ParseResFail;
@@ -1044,7 +1070,7 @@ enum ParseRes _targum_parser_exec_meta_ast(
 			enum ParseRes result = _targum_parser_exec_meta_ast(state, subrule, subrule, subchild);
 			if( result==ParseResFail ) {
 				targum_parser_free_cst(&subchild);
-			} else if( harbol_tree_len(subchild)==0 ) {
+			} else if( subchild->kids.len==0 ) {
 				if( state->parser->warns ) {
 					harbol_warn_msg(NULL, state->filename, "runtime warning", NULL, NULL, "rule '%s' produced no node(s).", subrule_key);
 				}
@@ -1072,6 +1098,7 @@ TARGUM_API struct TargumParser targum_parser_make(
 	LexemeFunc       *const lexeme_func,
 	ConsumeFunc      *const consume_func,
 	void             *const userdata,
+	const size_t            userdata_len,
 	const char              filename[static 1],
 	struct HarbolMap *const cfg
 ) {
@@ -1082,6 +1109,7 @@ TARGUM_API struct TargumParser targum_parser_make(
 		.lexer_iface.lexeme_fn   = lexeme_func,
 		.lexer_iface.consume_fn  = consume_func,
 		.lexer_iface.userdata    = userdata,
+		.lexer_iface.len_data    = userdata_len,
 		.filename                = filename,
 		.cfg                     = cfg,
 	};
@@ -1192,6 +1220,8 @@ TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parse
 		harbol_string_clear(&ml.lexeme);
 	}
 	
+	//print_rules(&rules_cache, stdout);
+	
 	/// form the individual ASTs into a directed, cyclic graph.
 	for( size_t i=0; i < rules_cache.len; i++ ) {
 		struct MetaNode **const n = harbol_map_idx_get(&rules_cache, i);
@@ -1292,9 +1322,9 @@ TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parse
 		fclose(rule_tree); rule_tree = NULL;
 	}
 	
-	if( parse_res==ParseResFail || harbol_tree_len(root)==0 ) {
+	if( parse_res==ParseResFail || root->kids.len==0 ) {
 		if( parser->warns ) {
-			const char *warn_msg = ( parse_res==ParseResFail )? "starting rule '%s' failed parsing." : "starter rule '%s' produced no nodes. freeing...";
+			const char *warn_msg = ( parse_res==ParseResFail )? "starting rule '%s' failed parsing." : "starter rule '%s' produced no parse tree nodes. freeing...";
 			harbol_warn_msg(NULL, parser->filename, "runtime warning", NULL, NULL, warn_msg, ( const char* )(rules_cache.keys[0]));
 		}
 		targum_parser_free_cst(&root);
@@ -1304,8 +1334,9 @@ TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parse
 	size_t line = 0, col = 0;
 	const uint32_t token_val = (*parser->lexer_iface.tok_fn)(parser->lexer_iface.userdata, 0, &line, &col);
 	if( token_val != 0 ) {
-		const char *tok_str = (*parser->lexer_iface.lexeme_fn)(parser->lexer_iface.userdata, 0, &line, &col);
-		harbol_err_msg(NULL, parser->filename, "parse error", NULL, NULL, "unparsed, leftover tokens remaining '%s' at line: '%zu', col: '%zu', freeing nodes...", tok_str, line, col);
+		size_t len = 0;
+		const char *tok_str = (*parser->lexer_iface.lexeme_fn)(parser->lexer_iface.userdata, 0, &line, &col, &len);
+		harbol_err_msg(NULL, parser->filename, "parse error", NULL, NULL, "unparsed, leftover tokens remaining '%.*s' at line: '%zu', col: '%zu', freeing parse tree nodes...", ( int )(len), tok_str, line, col);
 		targum_parser_free_cst(&root);
 	}
 	

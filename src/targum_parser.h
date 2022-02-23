@@ -28,7 +28,7 @@ typedef bool        LexerStartUpFunc(void *userdata, const char filename[]);
 typedef bool        LexerShutDwnFunc(void *userdata, const char filename[]);
 
 typedef uint32_t    TokenFunc(void *userdata, size_t lookahead, size_t *line, size_t *col);
-typedef const char *LexemeFunc(void *userdata, size_t lookahead, size_t *line, size_t *col);
+typedef const char *LexemeFunc(void *userdata, size_t lookahead, size_t *line, size_t *col, size_t *lexeme_len);
 typedef void        ConsumeFunc(void *userdata, size_t lookahead, bool consumed);
 
 
@@ -44,6 +44,7 @@ struct TargumParser {
 		/// Never invoked when error occurs.
 		ConsumeFunc      *consume_fn;
 		void             *userdata;
+		size_t            len_data;
 	} lexer_iface;
 	const char           *filename, *cfg_file;
 	struct HarbolMap     *cfg;
@@ -56,7 +57,7 @@ struct TargumCST {
 	size_t  len, tag;
 };
 
-TARGUM_API NEVER_NULL(1,2,3,4,5,6,7) struct TargumParser targum_parser_make(LexerStartUpFunc *startup_func, LexerShutDwnFunc *shutdown_fn, TokenFunc *token_func, LexemeFunc *lexeme_func, ConsumeFunc *consume_func, void *userdata, const char filename[], struct HarbolMap *cfg);
+TARGUM_API NEVER_NULL(1,2,3,4,5,6,8) struct TargumParser targum_parser_make(LexerStartUpFunc *startup_func, LexerShutDwnFunc *shutdown_fn, TokenFunc *token_func, LexemeFunc *lexeme_func, ConsumeFunc *consume_func, void *userdata, size_t len_userdata, const char filename[], struct HarbolMap *cfg);
 
 TARGUM_API NO_NULL bool targum_parser_init(struct TargumParser *parser);
 

@@ -98,7 +98,7 @@ void test_harbol_lex(FILE *const debug_stream)
 		"3.-3", /// good
 		"3.", /// good
 		"3.e-3", /// good
-		"3.e--3", /// good
+		"3.e--3", /// bad
 		"0f", /// bad
 		".34ef", /// bad
 		"0.34ef", /// bad
@@ -245,7 +245,7 @@ void test_harbol_lex(FILE *const debug_stream)
 		"0x1.2p3", /// correct
 		"0x1p+1", /// correct
 		"0x1.b7p-1", /// correct
-		"0x0.3_p10", /// correct
+		"0x0.3p10", /// correct
 		"0x3.3333333333334p-5", /// correct
 		"0x1.f", /// bad
 		"0553", /// correct
@@ -254,9 +254,13 @@ void test_harbol_lex(FILE *const debug_stream)
 		"0553llu", /// correct
 		"07'77", /// correct
 		"0553LUL", /// bad
-		"55'3", /// bad
+		"55'3", /// good
 		"078", /// bad
 		".llu", /// bad
+		"1.0e+001L", /// good.
+		"0ullll", /// bad.
+		"1.401608261624146e-15+", /// good but extraneous +
+		"2.289e1+", /// good
 	};
 	for( const char **i=&c_nums[0]; i<1[&c_nums]; i++ ) {
 		struct HarbolString lexeme = harbol_string_make(NULL, &( bool ){false});
@@ -271,8 +275,9 @@ void test_harbol_lex(FILE *const debug_stream)
 	{
 		struct HarbolString lexeme = harbol_string_make(NULL, &( bool ){false});
 		const char *end = NULL;
-		const bool res = lex_single_line_comment("/// kektus \\      \n foobar  \\ \n bazbard", &end, &lexeme);
-		fprintf(debug_stream, "result: %s :: comment: '%s'\n", res==0 ? "yes" : "no", lexeme.cstr);
+		size_t lines = 0;
+		const bool res = lex_single_line_comment("/// kektus \\      \n foobar  \\ \n bazbard", &end, &lexeme, &lines);
+		fprintf(debug_stream, "result: %s :: comment: '%s' - lines: '%zu'\n", res==0 ? "yes" : "no", lexeme.cstr, lines);
 		harbol_string_clear(&lexeme);
 	}
 	
@@ -280,8 +285,9 @@ void test_harbol_lex(FILE *const debug_stream)
 	{
 		struct HarbolString lexeme = harbol_string_make(NULL, &( bool ){false});
 		const char *end = NULL;
-		const bool res = lex_multi_line_comment("/** kektus \n foobar  \n bazbard */", &end, "*/", sizeof "*/"-1, &lexeme);
-		fprintf(debug_stream, "result: %s :: comment: '%s'\n", res==0 ? "yes" : "no", lexeme.cstr);
+		size_t lines = 0;
+		const bool res = lex_multi_line_comment("/** kektus \n foobar  \n bazbard */", &end, "*/", sizeof "*/"-1, &lexeme, &lines);
+		fprintf(debug_stream, "result: %s :: comment: '%s' - lines: '%zu'\n", res==0 ? "yes" : "no", lexeme.cstr, lines);
 		harbol_string_clear(&lexeme);
 	}
 	fputs("\nlex tools :: test converting utf8 to runes.\n", debug_stream);

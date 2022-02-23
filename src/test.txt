@@ -1,6 +1,4 @@
-b[vert1, vert2];
-b[n : j];
-b[n];
-*p();
-(*p)();
-p.b.c.a();
+MAIN
+X = X + 9;
+OUTPUT X
+1 2 3

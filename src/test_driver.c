@@ -31,13 +31,14 @@ static uint32_t targum_lexer_token(void *const userdata, const size_t lookahead,
 	return 0;
 }
 
-static const char *targum_lexer_cstr(void *const userdata, const size_t lookahead, size_t *const restrict line, size_t *const restrict col) {
+static const char *targum_lexer_cstr(void *const userdata, const size_t lookahead, size_t *const restrict line, size_t *const restrict col, size_t *const restrict len) {
 	const struct TargumLexer     *const lexer = userdata;
 	const struct TargumTokenInfo *const ti    = targum_lexer_peek_token(lexer, lookahead);
 	if( ti != NULL ) {
 		*line = ti->line;
 		*col  = ti->col;
-		return ti->lexeme.cstr;
+		*len  = ti->end - ti->start;
+		return &lexer->src.cstr[ti->start];
 	}
 	return "";
 }
@@ -48,6 +49,15 @@ static void targum_lexer_consume(void *const userdata, const size_t lookahead, c
 	if( consumed ) {
 		targum_lexer_advance(lexer, true);
 	}
+}
+
+static void targum_lexer_backtrack(void *const userdata, const size_t lookahead, size_t amount) {
+	/// 'amount' is how many tokens we need to go back.
+	struct TargumLexer *const restrict lexer = userdata;
+	if( lexer->index < amount ) {
+		/// check if it can overflow
+	}
+	//lexer->index -= amount;
 }
 
 static void print_cst(struct HarbolTree *const tree, const size_t tabs, FILE *const f) {
@@ -72,7 +82,7 @@ int main(const int argc, char *restrict argv[restrict static 1])
 	}
 	
 	struct TargumLexer  tlexer  = {0};
-	struct TargumParser tparser = targum_parser_make(startup_targum_lexer, shutdown_targum_lexer, targum_lexer_token, targum_lexer_cstr, targum_lexer_consume, &tlexer, argv[1], NULL);
+	struct TargumParser tparser = targum_parser_make(startup_targum_lexer, shutdown_targum_lexer, targum_lexer_token, targum_lexer_cstr, targum_lexer_consume/*, targum_lexer_backtrack*/, &tlexer, sizeof tlexer, argv[1], NULL);
 	if( !targum_parser_init(&tparser) ) {
 		puts("Targum Parser Driver Error: failed to initialize parser.");
 		return 1;
