@@ -6,1367 +6,1097 @@
 
 
 /**
- * Structure of File:
- * MetaCompiler -> Starts with MetaLexer, MetaParser, then MetaAST.
- * MetaInterpreter -> after line 530.
- * Parser API is after the MetaInterpreter code.
+ * Katova's Grammar.
+ * 
+ * Grammar      = *TypeDecl +Rule .
+ * TypeDecl     = 'type' identifier [ '=' ] ( Type | TypeSpec ) .
+ * TypeSpec     = '{' +FieldList '}' .
+ * Type         = identifier .
+ * 
+ * Field        = IdentList Type .
+ * IdentList    = identifier *( ',' identifier ) .
+ * FieldList    = Field *( ',' Field ) .
+ * 
+ * Rule         = 'rule' identifier Signature [ Block ] .
+ * Signature    = Parameters [ Result ] .
+ * Result       = Type | '(' IdentList ')' .
+ * Parameters   = '(' [ FieldList ] ')' .
+ * 
+ * Block        = '{' +Statement '}' .
+ * Statement    = TypeDecl | SimpleStmt | IfStmt | ForStmt | MatchStmt | LoopStmt | ReturnStmt .
+ * 
+ * IfStmt       = 'if' [ SimpleStmt ';' ] SimpleStmt Block [ 'else' ( IfStmt | Block ) ] .
+ * 
+ * ForStmt      = 'for' [ Condition(SimpleStmt) | ForClause ] Block .
+ * ForClause    = [ InitStmt(SimpleStmt) ] ";" [ Condition(Expression) ] ";" [ PostStmt(SimpleStmt) ] .
+ * 
+ * LoopStmt     = 'break' | 'pass' .
+ * ReturnStmt   = 'return' [ ExprList | ';' ] .
+ * 
+ * MatchStmt    = 'match' [ SimpleStmt ';' ] SimpleStmt '{' +MatchCase '}' .
+ * CaseClause   = ExprList Block .
+ * 
+ * SimpleStmt   = '' | ExprStmt | Assignment | ShortVarDecl .
+ * ExprStmt     = Expr .
+ * Assignment   = ExprList ['+'] '=' ExprList .
+ * ShortVarDecl = IdentList ':=' ExprList .
+ * 
+ * Expr         = OrExpr .
+ * OrExpr       = AndExpr *( '||' ) AndExpr ) .
+ * AndExpr      = EqExpr *( '&&' EqExpr ) .
+ * EqExpr       = PrimaryExpr *( ( '=='|'!=' ) PrimaryExpr ) .
+ * 
+ * PrimaryExpr  = Operand *( '[' Expr ']' | '(' [ ExprList ] ')' ) .
+ * Operand      = int | string | identifier | '(' Expr ')' .
  */
 
-enum MetaToken {
-	MetaTokenInvalid,
-	MetaTokenRule,     /// <a>
-	MetaTokenAlt,      /// | /
-	MetaTokenLParens, MetaTokenRParens, /// ()
-	MetaTokenLBrack,  MetaTokenRBrack,  /// []
-	MetaTokenPlus,     /// +
-	MetaTokenStar,     /// *
-	MetaTokenAmp,      /// &
-	MetaTokenExclmtn,  /// !
-	MetaTokenReqToken, /// 'i' "i"
-	MetaTokenLexToken, /// {i*}
-};
+static struct KatovaAST *const _bad_node = &( struct KatovaAST ){0};
 
-static inline const char *_get_metatoken(const enum MetaToken tok) {
-	switch( tok ) {
-		case MetaTokenRule:     return "rule metatoken";
-		case MetaTokenAlt:      return "alt metatoken";
-		case MetaTokenLParens:  return "( metatoken";
-		case MetaTokenRParens:  return ") metatoken";
-		case MetaTokenLBrack:   return "[ metatoken";
-		case MetaTokenRBrack:   return "] metatoken";
-		case MetaTokenPlus:     return "+ metatoken";
-		case MetaTokenStar:     return "* metatoken";
-		case MetaTokenAmp:      return "& metatoken";
-		case MetaTokenExclmtn:  return "! metatoken";
-		case MetaTokenReqToken: return "required metatoken";
-		case MetaTokenLexToken: return "lexer metatoken";
-		case MetaTokenInvalid:
-		default:
-			                    return "invalid meta-token";
-	}
+static struct KatovaAST *_new_katova_node(enum KatovaASTType tag);
+
+void katova_parse_init_expr_header(struct TargumLexer *lexer, struct KatovaAST **init, struct KatovaAST **cond, struct KatovaAST **post);
+struct KatovaAST *katova_parse_grammar(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_type_decl(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_type_spec(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_rule(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_field(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_params(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_signature(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_block(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_case_clause(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_match_stmt(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_for_stmt(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_if_stmt(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_stmt(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_simple_stmt(struct TargumLexer *lexer, struct KatovaAST *lhs);
+struct KatovaAST *katova_parse_expr_list(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_expr(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_or_expr(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_and_expr(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_equality_expr(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_primary_expr(struct TargumLexer *lexer);
+struct KatovaAST *katova_parse_operand(struct TargumLexer *lexer);
+
+
+static const char *_get_lexeme(struct TargumLexer *const lexer) {
+	return targum_lexer_get_lexeme(lexer, lexer->curr_tok);
+}
+
+static inline void _print_curr_token(struct TargumLexer *const lexer, FILE *const stream) {
+	const size_t lexeme_len = targum_token_info_get_len(lexer->curr_tok);
+	fprintf(stream, "curr token: '%.*s' | Pos line: %u, col: %u\n", ( int )(lexeme_len), _get_lexeme(lexer), lexer->curr_tok->line, lexer->curr_tok->col);
 }
 
 
-struct MetaLexer {
-	struct HarbolString lexeme;
-	const char         *src, *iter, *line_start, *key;
-	size_t              line, errs;
-	enum MetaToken      token;
-};
-
-NO_NULL enum MetaToken metalexer_get_token(struct MetaLexer *mlexer);
-
-
-enum MetaNodeType {
-	MetaNodeInvalid = 0,
-	MetaNodeRuleListExpr, /// <a> <b>, (<a> <b>) groups are parsed as rule lists. 
-	MetaNodeOpt,          /// [<a> <b>]
-	MetaNodeAlt,          /// <a> | <b>
-	MetaNodePlusExpr,     /// +
-	MetaNodeStarExpr,     /// *
-	MetaNodePosLook,      /// &
-	MetaNodeNegLook,      /// !
-	MetaNodeLexToken,     /// {identifier}
-	MetaNodeReqToken,     /// 'if'
-	MetaNodeRuleExprStr,  /// "<a>"
-	MetaNodeRuleExprAST,  /// ptr to <a> node
-};
-
-static inline const char *_get_metanode(const enum MetaNodeType tok) {
-	switch( tok ) {
-		case MetaNodeRuleListExpr: return "rule expr list";
-		case MetaNodeOpt:          return "optional";
-		case MetaNodeAlt:          return "alternate";
-		case MetaNodePlusExpr:     return "one-or-more";
-		case MetaNodeStarExpr:     return "none-or-more";
-		case MetaNodePosLook:      return "positive lookahead";
-		case MetaNodeNegLook:      return "negative lookahead";
-		case MetaNodeLexToken:     return "lex token";
-		case MetaNodeReqToken:     return "req token";
-		case MetaNodeRuleExprStr:  return "rule expr string";
-		case MetaNodeRuleExprAST:  return "rule expr node";
-		case MetaNodeInvalid:
-		default:                   return "invalid metanode";
+/** Grammar = *TypeDecl +Rule . */
+struct KatovaAST *katova_parse_grammar(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	
+	struct KatovaAST *grammar = _new_katova_node(KatovaASTGrammar);
+	grammar->_.grammar.rules = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	grammar->_.grammar.types = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	/// parse until EOF.
+	while( (*token)->tag != 0 ) {
+		const char *lexeme = _get_lexeme(lexer);
+		if( !strncmp(lexeme, "type", sizeof "type"-1) ) {
+			struct KatovaAST *type_decl = katova_parse_type_decl(lexer);
+			if( harbol_array_full(&grammar->_.grammar.types) ) {
+				harbol_array_grow(&grammar->_.grammar.types, sizeof type_decl);
+			}
+			harbol_array_insert(&grammar->_.grammar.types, &type_decl, sizeof type_decl);
+		} else if( !strncmp(lexeme, "rule", sizeof "rule"-1) ) {
+			struct KatovaAST *rule_def = katova_parse_rule(lexer);
+			if( harbol_array_full(&grammar->_.grammar.rules) ) {
+				harbol_array_grow(&grammar->_.grammar.rules, sizeof rule_def);
+			}
+			harbol_array_insert(&grammar->_.grammar.rules, &rule_def, sizeof rule_def);
+		} else {
+			const size_t lexeme_len = targum_token_info_get_len(*token);
+			harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "unknown token in top grammar: '%.*s'.", ( int )(lexeme_len), lexeme);
+			return _bad_node;
+		}
 	}
+	if( grammar->_.grammar.rules.len==0 ) {
+		harbol_warn_msg(NULL, targum_lexer_get_filename(lexer), "warning", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "no rules defined.");
+	}
+	return grammar;
 }
-
-struct MetaNode {
-	union {
-		struct HarbolArray               *node_list;
-		struct MetaNode                  *node_expr;
-		struct{ struct MetaNode *l, *r; } alt_expr;
-		struct HarbolString               token_expr;
-	} node;
-	enum MetaNodeType                     tag;
-};
-
-struct MetaNode *metanode_new_listexpr(struct HarbolArray *rule_list);
-struct MetaNode *metanode_new_group(struct MetaNode *expr);
-struct MetaNode *metanode_new_opt(struct MetaNode *expr);
-struct MetaNode *metanode_new_alt(struct MetaNode *left, struct MetaNode *rite);
-struct MetaNode *metanode_new_rep_plus(struct MetaNode *expr);
-struct MetaNode *metanode_new_rep_star(struct MetaNode *expr);
-struct MetaNode *metanode_new_pos_look(struct MetaNode *expr);
-struct MetaNode *metanode_new_neg_look(struct MetaNode *expr);
-struct MetaNode *metanode_new_rule(const struct HarbolString *rule);
-struct MetaNode *metanode_new_lex_token(const struct HarbolString *tok);
-struct MetaNode *metanode_new_req_token(const struct HarbolString *tok);
-NO_NULL void     metanode_free(struct MetaNode **nref, bool follow);
-void             metanode_print(const struct MetaNode *n, size_t tabs, FILE *stream);
-
 
 /**
- * Grammar of the MetaAST Parser
- * 
- * rule     := sequence *( ('|' | '/') sequence ) .
- * sequence := +rep .
- * rep      := ['+' | '*' | '&' | '!'] factor .
- * factor   := terminal | '<' IDEN '>' | '(' rule ')' | '[' rule ']' .
- * terminal := "'" KEYWORD "'" | '"' KEYWORD '"' | '{' KEYWORD '}' .
+ * TypeDecl = 'type' identifier [ '=' ] Type [ TypeSpec ] .
+ * Type     = identifier .
  */
-typedef struct MetaNode *MetaParseFunc(struct MetaLexer *mlexer);
-
-MetaParseFunc
-	metaparser_parse_rule,
-	metaparser_parse_seq,
-	metaparser_parse_rep,
-	metaparser_parse_factor
-;
-
-
-enum MetaToken metalexer_get_token(struct MetaLexer *const mlexer)
-{
-	if( mlexer->src==NULL ) {
-		return (mlexer->token = MetaTokenInvalid);
+struct KatovaAST *katova_parse_type_decl(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	if( strncmp(lexeme, "type", sizeof "type"-1) ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing 'type' keyword for type declaration, got '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
 	}
-	harbol_string_clear(&mlexer->lexeme);
-	while( *mlexer->iter != 0 ) {
-		if( is_whitespace(*mlexer->iter) ) {
-			if( *mlexer->iter=='\n' ) {
-				mlexer->line++;
-				mlexer->line_start = mlexer->iter;
+	targum_lexer_advance(lexer, false); /// advance past 'type' keyword.
+	lexeme = _get_lexeme(lexer);
+	if( (*token)->tag != 2 ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing name for type declaration, got '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
+	}
+	struct KatovaAST *typedecl = _new_katova_node(KatovaASTTypeDecl);
+	typedecl->_.type_decl.name = katova_parse_operand(lexer); /// advances past name.
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0]=='=' ) {
+		typedecl->_.type_decl.is_alias = true;
+		targum_lexer_advance(lexer, false); /// advance past '='.
+		lexeme = _get_lexeme(lexer);
+	} else if( (*token)->tag != 2 ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing name for type declaration, got '%.*s'.", ( int )(lexeme_len), lexeme);
+		katova_free(&typedecl);
+		return _bad_node;
+	}
+	
+	typedecl->_.type_decl.type = katova_parse_operand(lexer); /// advances past type name.
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0]=='{' ) {
+		typedecl->_.type_decl.spec = katova_parse_type_spec(lexer);
+	}
+	return typedecl;
+}
+
+/** TypeSpec = '{' +FieldList '}' . */
+struct KatovaAST *katova_parse_type_spec(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '{' ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "expected '{' for type specification but have '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
+	}
+	targum_lexer_advance(lexer, false);
+	lexeme = _get_lexeme(lexer);
+	
+	struct KatovaAST *type_spec = _new_katova_node(KatovaASTTypeSpec);
+	type_spec->_.list = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	while( (*token)->tag != 0 && lexeme[0] != '}' ) {
+		struct KatovaAST *stmt = katova_parse_field(lexer);
+		if( stmt==_bad_node ) {
+			break;
+		}
+		if( harbol_array_full(&type_spec->_.list) ) {
+			harbol_array_grow(&type_spec->_.list, sizeof stmt);
+		}
+		harbol_array_insert(&type_spec->_.list, &stmt, sizeof stmt);
+		lexeme = _get_lexeme(lexer);
+	}
+	
+	if( type_spec->_.list.len==0 ) {
+		harbol_array_clear(&type_spec->_.list);
+	}
+	
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '}' ) {
+		const int lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ending '}' for statement block. Current token: '%.*s'", lexeme_len, lexeme);
+		katova_free(&type_spec);
+		return _bad_node;
+	}
+	targum_lexer_advance(lexer, false);
+	return type_spec;
+}
+
+/** Rule = 'rule' identifier Signature [ Block ] . */
+struct KatovaAST *katova_parse_rule(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	if( strncmp(lexeme, "rule", sizeof "rule"-1) ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing 'rule' keyword, got '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
+	}
+	
+	targum_lexer_advance(lexer, false); /// advance past 'rule' keyword.
+	lexeme = _get_lexeme(lexer);
+	if( (*token)->tag != 2 ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing name for rule definition, got '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
+	}
+	struct KatovaAST *rule = _new_katova_node(KatovaASTRule);
+	rule->_.rule.name = katova_parse_operand(lexer); /// advances past name.
+	rule->_.rule.sig = katova_parse_signature(lexer);
+	
+	lexeme = _get_lexeme(lexer);
+	rule->_.rule.block = ( lexeme[0] == '{' )? katova_parse_block(lexer) : _bad_node;
+	return rule;
+}
+
+/**
+ * FieldDecl    = Field .
+ * Field        = IdentList Type .
+ * IdentList    = identifier *(',' identifier) .
+ */
+struct KatovaAST *katova_parse_field(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	struct KatovaAST *field = _new_katova_node(KatovaASTField);
+	field->_.field.idens = katova_parse_expr_list(lexer);
+	if( (*token)->tag != 2 ) {
+		const char *lexeme = _get_lexeme(lexer);
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "expected identifier in identifier list typing but have '%.*s'.", ( int )(lexeme_len), lexeme);
+		katova_free(&field);
+		field = _bad_node;
+	}
+	field->_.field.type = katova_parse_expr(lexer);
+	return field;
+}
+
+/**
+ * Parameters = '(' [ FieldList ] ')' .
+ * FieldList  = FieldDecl *( ',' FieldDecl ) .
+ */
+struct KatovaAST *katova_parse_params(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '(' ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "need '(' for rule signature but have '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
+	}
+	targum_lexer_advance(lexer, false); /// advance past (.
+	lexeme = _get_lexeme(lexer);
+	struct KatovaAST *fieldlist = _new_katova_node(KatovaASTFieldList);
+	fieldlist->_.list = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	while( (*token)->tag > 0 && lexeme[0] != ')' ) {
+		struct KatovaAST *field = katova_parse_field(lexer);
+		if( harbol_array_full(&fieldlist->_.list) ) {
+			harbol_array_grow(&fieldlist->_.list, sizeof field);
+		}
+		harbol_array_insert(&fieldlist->_.list, &field, sizeof field);
+		lexeme = _get_lexeme(lexer);
+		if( lexeme[0]==',' ) {
+			targum_lexer_advance(lexer, false);
+			lexeme = _get_lexeme(lexer);
+		} else if( lexeme[0] != ')' ) {
+			const size_t lexeme_len = targum_token_info_get_len(*token);
+			harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ',' in param list, got '%.*s'.", ( int )(lexeme_len), lexeme);
+			katova_free(&fieldlist);
+			return _bad_node;
+		}
+	}
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != ')' ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ending ')' in param list, got '%.*s'.", ( int )(lexeme_len), lexeme);
+		katova_free(&fieldlist);
+		return _bad_node;
+	}
+	targum_lexer_advance(lexer, false); /// advance past ).
+	
+	if( fieldlist->_.list.len==0 ) {
+		harbol_array_clear(&fieldlist->_.list);
+	}
+	return fieldlist;
+}
+
+/** Signature = Parameters [ Result ] . */
+struct KatovaAST *katova_parse_signature(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	struct KatovaAST *sig = _new_katova_node(KatovaASTFuncSignature);
+	sig->_.func_signature.params = katova_parse_params(lexer);
+	
+	const char *lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '{' ) {
+		if( lexeme[0]=='(' ) {
+			targum_lexer_advance(lexer, false);
+			sig->_.func_signature.results = katova_parse_expr_list(lexer);
+			lexeme = _get_lexeme(lexer);
+			if( lexeme[0] != ')' ) {
+				const size_t lexeme_len = targum_token_info_get_len(*token);
+				harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ending ')' in results list, got '%.*s'.", ( int )(lexeme_len), lexeme);
+				katova_free(&sig);
+				return _bad_node;
 			}
-			mlexer->iter++;
-			continue;
+			targum_lexer_advance(lexer, false);
+		} else {
+			sig->_.func_signature.results = katova_parse_expr(lexer);
+		}
+	}
+	return sig;
+}
+
+/** Block = '{' *Statement '}' . */
+struct KatovaAST *katova_parse_block(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '{' ) {
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "expected '{' for block but have '%.*s'.", ( int )(lexeme_len), lexeme);
+		return _bad_node;
+	}
+	targum_lexer_advance(lexer, false);
+	lexeme = _get_lexeme(lexer);
+	
+	struct KatovaAST *block_stmt = _new_katova_node(KatovaASTBlock);
+	block_stmt->_.list = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	while( (*token)->tag != 0 && lexeme[0] != '}' ) {
+		struct KatovaAST *stmt = katova_parse_stmt(lexer);
+		if( stmt==_bad_node ) {
+			break;
+		}
+		if( harbol_array_full(&block_stmt->_.list) ) {
+			harbol_array_grow(&block_stmt->_.list, sizeof stmt);
+		}
+		harbol_array_insert(&block_stmt->_.list, &stmt, sizeof stmt);
+		lexeme = _get_lexeme(lexer);
+	}
+	
+	if( block_stmt->_.list.len==0 ) {
+		harbol_array_clear(&block_stmt->_.list);
+	}
+	
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '}' ) {
+		const int lexeme_len = targum_token_info_get_len(*token);
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ending '}' for statement block. Current token: '%.*s'", lexeme_len, lexeme);
+		katova_free(&block_stmt);
+		block_stmt = _bad_node;
+		return block_stmt;
+	}
+	targum_lexer_advance(lexer, false);
+	return block_stmt;
+}
+
+
+/// keyword init; cond; post
+void katova_parse_init_expr_header(struct TargumLexer *const lexer, struct KatovaAST **const init, struct KatovaAST **const cond, struct KatovaAST **const post) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	const int_fast8_t keyword = lexeme[0];
+	
+	targum_lexer_advance(lexer, false); /// advance past the keyword.
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0]=='{' && keyword=='i' ) { /// if
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing condition in if statement.");
+		return;
+	}
+	
+	if( lexeme[0] != ';' ) {
+		*init = katova_parse_simple_stmt(lexer, NULL);
+	}
+	
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '{' ) {
+		if( lexeme[0]==';' ) {
+			targum_lexer_advance(lexer, false);
+			lexeme = _get_lexeme(lexer);
+		} else if( lexeme[0] != '{' ) {
+			harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "expected { in for-loop header.");
 		}
 		
-		switch( *mlexer->iter ) {
-			case '<': {
-				mlexer->iter++;
-				char *end = NULL;
-				lex_until(mlexer->iter, ( const char** )(&end), &mlexer->lexeme, '>');
-				if( end != NULL ) {
-					mlexer->iter = end + 1;
+		if( keyword=='f' ) { /// for keyword.
+			if( lexeme[0] != ';' ) {
+				if( lexeme[0]=='{' ) {
+					harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "expecting for loop condition.");
+					return;
 				}
-				return mlexer->token = MetaTokenRule;
+				*cond = katova_parse_simple_stmt(lexer, NULL);
 			}
-			case '\'': case '"': {
-				char *end = NULL;
-				const int res = lex_c_style_str(mlexer->iter, ( const char** )(&end), &mlexer->lexeme);
-				if( res > HarbolLexNoErr ) {
-					return (mlexer->token = MetaTokenInvalid);
-				}
-				if( end != NULL ) {
-					mlexer->iter = end;
-				}
-				return mlexer->token = MetaTokenReqToken;
+			lexeme = _get_lexeme(lexer);
+			if( lexeme[0] != ';' ) {
+				harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ';' in for loop condition.");
+				return;
 			}
-			case '{': { /// literal value key.
-				mlexer->iter++;
-				char *end = NULL;
-				lex_until(mlexer->iter, ( const char** )(&end), &mlexer->lexeme, '}');
-				if( end != NULL ) {
-					mlexer->iter = end + 1;
+			targum_lexer_advance(lexer, false); /// advance past semicolon.
+			lexeme = _get_lexeme(lexer);
+			if( lexeme[0] != '{' ) {
+				if( post != NULL ) {
+					*post = katova_parse_simple_stmt(lexer, NULL);
+					if( *post != _bad_node && (*post)->tag==KatovaASTAssignStmt && (*post)->_.assign.op==':' ) {
+						harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "cannot declare in post statement of for loop.");
+						return;
+					}
 				}
-				return mlexer->token = MetaTokenLexToken;
 			}
-			case '|': case '/':
-				harbol_string_copy_cstr(&mlexer->lexeme, "|");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenAlt;
-			case '(':
-				harbol_string_copy_cstr(&mlexer->lexeme, "(");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenLParens;
-			case ')':
-				harbol_string_copy_cstr(&mlexer->lexeme, ")");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenRParens;
-			case '[':
-				harbol_string_copy_cstr(&mlexer->lexeme, "[");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenLBrack;
-			case ']':
-				harbol_string_copy_cstr(&mlexer->lexeme, "]");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenRBrack;
-			case '+':
-				harbol_string_copy_cstr(&mlexer->lexeme, "+");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenPlus;
-			case '*':
-				harbol_string_copy_cstr(&mlexer->lexeme, "*");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenStar;
-			case '&':
-				harbol_string_copy_cstr(&mlexer->lexeme, "&");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenAmp;
-			case '!':
-				harbol_string_copy_cstr(&mlexer->lexeme, "!");
-				mlexer->iter++;
-				return mlexer->token = MetaTokenExclmtn;
-			default:
-				harbol_err_msg(&mlexer->errs, "grammar", "syntax error", &mlexer->line, &( size_t ){ mlexer->iter - mlexer->src }, "Bad grammar token: '%c'. Aborting...", *mlexer->iter);
-				abort();
+		} else if( lexeme[0] != '{' ) {
+			*cond = katova_parse_simple_stmt(lexer, NULL);
+		}
+	} else {
+		*cond = *init;
+		*init = NULL;
+	}
+}
+
+/** CaseClause = ExprList Block . */
+struct KatovaAST *katova_parse_case_clause(struct TargumLexer *const lexer) {
+	struct KatovaAST *case_clause = _new_katova_node(KatovaASTCaseClause);
+	case_clause->_.match_case.cases = katova_parse_expr_list(lexer);
+	case_clause->_.match_case.block = katova_parse_block(lexer);
+	return case_clause;
+}
+
+/** MatchStmt = 'match' [ SimpleStmt ';' ] SimpleStmt '{' +MatchCase '}' . */
+struct KatovaAST *katova_parse_match_stmt(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	struct KatovaAST *match_stmt = _new_katova_node(KatovaASTMatchStmt);
+	katova_parse_init_expr_header(lexer, &match_stmt->_.match.init, &match_stmt->_.match.cond, NULL);
+	const char *lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '{' ) {
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing { for match block.");
+		katova_free(&match_stmt);
+		match_stmt = _bad_node;
+		return match_stmt;
+	}
+	match_stmt->_.match.body = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	struct HarbolArray *const match_body = &match_stmt->_.match.body;
+	
+	targum_lexer_advance(lexer, false); /// advance past {
+	lexeme = _get_lexeme(lexer);
+	while( (*token)->tag > 0 && lexeme[0] != '}' ) {
+		struct KatovaAST *case_clause = katova_parse_case_clause(lexer);
+		if( case_clause==_bad_node ) {
+			break;
+		}
+		if( harbol_array_full(match_body) ) {
+			harbol_array_grow(match_body, sizeof case_clause);
+		}
+		harbol_array_insert(match_body, &case_clause, sizeof case_clause);
+		lexeme = _get_lexeme(lexer);
+	}
+	
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '}' ) {
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ending } for match block.");
+		katova_free(&match_stmt);
+		match_stmt = _bad_node;
+		return match_stmt;
+	}
+	targum_lexer_advance(lexer, false); /// advance past }
+	lexeme = _get_lexeme(lexer);
+	
+	if( match_body->len==0 ) {
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax warning", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "match block is empty.");
+		harbol_array_clear(match_body);
+	}
+	return match_stmt;
+}
+
+/**
+ * ForStmt      = 'for' [ Condition(SimpleStmt) | ForClause ] Block .
+ * ForClause    = [ InitStmt(SimpleStmt) ] ";" [ Condition(Expression) ] ";" [ PostStmt(SimpleStmt) ] .
+ */
+struct KatovaAST *katova_parse_for_stmt(struct TargumLexer *const lexer) {
+	struct KatovaAST *for_stmt = _new_katova_node(KatovaASTForStmt);
+	katova_parse_init_expr_header(lexer, &for_stmt->_._for.init, &for_stmt->_._for.cond, &for_stmt->_._for.post);
+	for_stmt->_._for.body = katova_parse_block(lexer);
+	return for_stmt;
+}
+
+/** IfStmt = 'if' [ Init ';' ] Expr Block [ 'else' ( IfStmt | Block ) ] . */
+struct KatovaAST *katova_parse_if_stmt(struct TargumLexer *const lexer) {
+	struct KatovaAST *if_stmt = _new_katova_node(KatovaASTIfStmt);
+	katova_parse_init_expr_header(lexer, &if_stmt->_._if.init, &if_stmt->_._if.cond, NULL);
+	if_stmt->_._if.then = katova_parse_block(lexer);
+	
+	const char *lexeme = _get_lexeme(lexer);
+	if( !strncmp(lexeme, "else", sizeof "else"-1) ) {
+		targum_lexer_advance(lexer, false);
+		lexeme = _get_lexeme(lexer);
+		struct KatovaAST **else_ = &if_stmt->_._if._else;
+		if( !strncmp(lexeme, "if", sizeof "if"-1) ) {
+			*else_ = katova_parse_if_stmt(lexer);
+		} else if( lexeme[0]=='{' ) {
+			*else_ = katova_parse_block(lexer);
 		}
 	}
-	return mlexer->token = MetaTokenInvalid;
+	return if_stmt;
 }
 
-/**************************************************************************/
-
-/// rule := sequence *( ('|' | '/') sequence ) .
-struct MetaNode *metaparser_parse_rule(struct MetaLexer *const mlexer) {
-	metalexer_get_token(mlexer);
-	const enum MetaToken *t = &mlexer->token;
-	struct MetaNode *n = metaparser_parse_seq(mlexer);
-	while( *t==MetaTokenAlt ) {
-		metalexer_get_token(mlexer);
-		n = metanode_new_alt(n, metaparser_parse_seq(mlexer));
+/** Statement = Decl | SimpleStmt | IfStmt | ForStmt | MatchStmt | LoopStmt | ReturnStmt . */
+struct KatovaAST *katova_parse_stmt(struct TargumLexer *const lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	
+	/// Golang's parsing typically checks for identifier.
+	if( (*token)->tag==2 ) { /// identifier.
+		struct KatovaAST *lhs = katova_parse_expr_list(lexer);
+		return katova_parse_simple_stmt(lexer, lhs);
 	}
-	return n;
-}
-
-struct HarbolArray *_make_metanode_list(struct MetaLexer *const mlexer, MetaParseFunc *const func) {
-	struct HarbolArray *nodelist = harbol_array_new(sizeof(struct MetaNode*), ARRAY_DEFAULT_SIZE);
-	for( struct MetaNode *n = (*func)(mlexer); n != NULL; n = (*func)(mlexer) ) {
-		if( harbol_array_full(nodelist) && !harbol_array_grow(nodelist, sizeof(struct MetaNode*)) ) {
-			harbol_err_msg(NULL, "grammar", "memory error", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "Unable to grow node list. Aborting...");
-			abort();
+	
+	/// parse types here.
+	
+	
+	lexeme = _get_lexeme(lexer);
+	if( !strncmp(lexeme, "if", sizeof "if"-1) ) {
+		return katova_parse_if_stmt(lexer);
+	} else if( !strncmp(lexeme, "for", sizeof "for"-1) ) {
+		return katova_parse_for_stmt(lexer);
+	} else if( !strncmp(lexeme, "stop", sizeof "stop"-1) || !strncmp(lexeme, "pass", sizeof "pass"-1) ) {
+		struct KatovaAST *loop_ctrl = _new_katova_node(KatovaASTLoopStmt);
+		const size_t lexeme_len = targum_token_info_get_len(*token);
+		harbol_string_format(&loop_ctrl->_.str, false, "%.*s", ( int )(lexeme_len), lexeme);
+		targum_lexer_advance(lexer, false);
+		return loop_ctrl;
+	} else if( !strncmp(lexeme, "return", sizeof "return"-1) ) {
+		struct KatovaAST *ret_stmt = _new_katova_node(KatovaASTReturnStmt);
+		targum_lexer_advance(lexer, false);
+		lexeme = _get_lexeme(lexer);
+		if( lexeme[0] != ';' ) { /// empty return expression requires semicolon.
+			ret_stmt->_.node = katova_parse_expr_list(lexer);
+		} else {
+			targum_lexer_advance(lexer, false);
 		}
-		harbol_array_insert(nodelist, &n, sizeof n);
-	}
-	if( nodelist->len==0 ) {
-		harbol_warn_msg(NULL, "grammar", "critical warning", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "production '%s' produced an empty rule, freeing...", mlexer->key);
-		harbol_array_cleanup(&nodelist);
-	}
-	return nodelist;
-}
-
-/** sequence := +rep . */
-struct MetaNode *metaparser_parse_seq(struct MetaLexer *const mlexer) {
-	return metanode_new_listexpr(_make_metanode_list(mlexer, metaparser_parse_rep));
-}
-
-/** rep := ['+' | '*' | '&' | '!'] factor . */
-struct MetaNode *metaparser_parse_rep(struct MetaLexer *const mlexer) {
-	const enum MetaToken *const t = &mlexer->token;
-	switch( *t ) {
-		case MetaTokenPlus:
-			metalexer_get_token(mlexer);
-			return metanode_new_rep_plus(metaparser_parse_factor(mlexer));
-		case MetaTokenStar:
-			metalexer_get_token(mlexer);
-			return metanode_new_rep_star(metaparser_parse_factor(mlexer));
-		case MetaTokenAmp:
-			metalexer_get_token(mlexer);
-			return metanode_new_pos_look(metaparser_parse_factor(mlexer));
-		case MetaTokenExclmtn:
-			metalexer_get_token(mlexer);
-			return metanode_new_neg_look(metaparser_parse_factor(mlexer));
-		default:
-			return metaparser_parse_factor(mlexer);
+		return ret_stmt;
+	} else if( !strncmp(lexeme, "match", sizeof "match"-1) ) {
+		return katova_parse_match_stmt(lexer);
+	} else if( !strncmp(lexeme, "type", sizeof "type"-1) ) {
+		return katova_parse_type_decl(lexer);
+	} else if( !strncmp(lexeme, "{", sizeof "{"-1) ) {
+		return katova_parse_block(lexer);
+	} else {
+		harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "bad statement.");
+		return _bad_node;
 	}
 }
 
 /**
- * factor   := terminal | '<' IDEN '>' | '(' rule ')' | '[' rule ']' .
- * terminal := "'" KEYWORD "'" | '"' KEYWORD '"' | '{' KEYWORD '}'   .
+ * SimpleStmt   = '' | ExprStmt | Assignment | ShortVarDecl .
+ * ExprStmt     = Expr .
+ * Assignment   = ExprList ['+'] '=' ExprList .
+ * ShortVarDecl = IdentList ':=' ExprList .
  */
-struct MetaNode *metaparser_parse_factor(struct MetaLexer *const mlexer) {
-	const enum MetaToken *const t = &mlexer->token;
-	switch( *t ) {
-		case MetaTokenLParens: {
-			struct MetaNode *group = metaparser_parse_rule(mlexer);
-			if( *t != MetaTokenRParens ) {
-				harbol_err_msg(&mlexer->errs, "grammar", "error", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "Missing right parens ')' in production '%s'!", mlexer->key);
-				metanode_free(&group, false);
-			} else {
-				metalexer_get_token(mlexer);
+struct KatovaAST *katova_parse_simple_stmt(struct TargumLexer *const lexer, struct KatovaAST *lhs) {
+	const char *lexeme = _get_lexeme(lexer);
+	
+	if( lhs==NULL ) {
+		lhs = katova_parse_expr_list(lexer);
+	}
+	
+	lexeme = _get_lexeme(lexer);
+	if( lexeme[0] != '=' && strncmp(lexeme, ":=", sizeof ":="-1) ) {
+		if( !strncmp(lexeme, "+=", sizeof "+="-1) ) {
+			targum_lexer_advance(lexer, false);
+			struct KatovaAST *ast_assign = _new_katova_node(KatovaASTAssignStmt);
+			ast_assign->_.assign.lhs = lhs;
+			ast_assign->_.assign.op  = '+';
+			ast_assign->_.assign.rhs = katova_parse_expr(lexer);
+			return ast_assign;
+		} else { /// default expr
+			struct KatovaAST *expr_stmt = _new_katova_node(KatovaASTExprStmt);
+			expr_stmt->_.node = lhs;
+			return expr_stmt;
+		}
+	} else if( !strncmp(lexeme, ":=", sizeof ":="-1) ) {
+		targum_lexer_advance(lexer, false);
+		struct KatovaAST *ast_assign = _new_katova_node(KatovaASTAssignStmt);
+		ast_assign->_.assign.lhs = lhs;
+		ast_assign->_.assign.op  = ':';
+		ast_assign->_.assign.rhs = katova_parse_expr_list(lexer);
+		return ast_assign;
+	} else if( lexeme[0]=='=' ) {
+		targum_lexer_advance(lexer, false);
+		struct KatovaAST *ast_assign = _new_katova_node(KatovaASTAssignStmt);
+		ast_assign->_.assign.lhs = lhs;
+		ast_assign->_.assign.op  = 0;
+		ast_assign->_.assign.rhs = katova_parse_expr_list(lexer);
+		return ast_assign;
+	}
+	return _bad_node;
+}
+
+/** ExprList = Expr *(',' Expr) */
+struct KatovaAST *katova_parse_expr_list(struct TargumLexer *lexer) {
+	struct KatovaAST *expr_list = _new_katova_node(KatovaASTExprList);
+	expr_list->_.list = harbol_array_make(sizeof(struct KatovaAST*), 4, &( bool ){false});
+	
+	struct KatovaAST *expr = katova_parse_expr(lexer);
+	if( harbol_array_full(&expr_list->_.list) ) {
+		harbol_array_grow(&expr_list->_.list, sizeof expr);
+	}
+	harbol_array_insert(&expr_list->_.list, &expr, sizeof expr);
+	
+	const char *lexeme = _get_lexeme(lexer);
+	if( lexeme[0]==',' ) {
+		while( lexeme[0]==',' ) {
+			targum_lexer_advance(lexer, false);
+			expr = katova_parse_expr(lexer);
+			if( harbol_array_full(&expr_list->_.list) ) {
+				harbol_array_grow(&expr_list->_.list, sizeof expr);
 			}
-			return group;
+			harbol_array_insert(&expr_list->_.list, &expr, sizeof expr);
+			lexeme = _get_lexeme(lexer);
 		}
-		case MetaTokenLBrack: {
-			struct MetaNode *opt = metanode_new_opt(metaparser_parse_rule(mlexer));
-			if( *t != MetaTokenRBrack ) {
-				harbol_err_msg(&mlexer->errs, "grammar", "error", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "Missing right bracket ']' in production '%s'!", mlexer->key);
-				metanode_free(&opt, false);
-			} else {
-				metalexer_get_token(mlexer);
+	}
+	return expr_list;
+}
+
+/** Expr = OrExpr . */
+struct KatovaAST *katova_parse_expr(struct TargumLexer *const lexer) {
+	return katova_parse_or_expr(lexer);
+}
+
+/** OrExpr = AndExpr *( '||' AndExpr ) . */
+struct KatovaAST *katova_parse_or_expr(struct TargumLexer *const lexer) {
+	struct KatovaAST *and_expr = katova_parse_and_expr(lexer);
+	const char *lexeme = _get_lexeme(lexer);
+	while( !strncmp(lexeme, "||", sizeof "||"-1) ) {
+		struct KatovaAST *logic_expr = _new_katova_node(KatovaASTBinaryExpr);
+		logic_expr->_.binary_expr.l  = and_expr;
+		logic_expr->_.binary_expr.op = lexeme[0];
+		targum_lexer_advance(lexer, false);
+		lexeme = _get_lexeme(lexer);
+		logic_expr->_.binary_expr.r = katova_parse_and_expr(lexer);
+		and_expr = logic_expr;
+	}
+	return and_expr;
+}
+
+/** AndExpr = EqualityExpr *( '&&' EqualityExpr ) . */
+struct KatovaAST *katova_parse_and_expr(struct TargumLexer *const lexer) {
+	struct KatovaAST *equality_expr = katova_parse_equality_expr(lexer);
+	const char *lexeme = _get_lexeme(lexer);
+	while( !strncmp(lexeme, "&&", sizeof "&&"-1) ) {
+		struct KatovaAST *logic_expr = _new_katova_node(KatovaASTBinaryExpr);
+		logic_expr->_.binary_expr.l  = equality_expr;
+		logic_expr->_.binary_expr.op = lexeme[0];
+		targum_lexer_advance(lexer, false);
+		lexeme = _get_lexeme(lexer);
+		logic_expr->_.binary_expr.r = katova_parse_equality_expr(lexer);
+		equality_expr = logic_expr;
+	}
+	return equality_expr;
+}
+
+/** EqualityExpr = PrimaryExpr *( ( '=='| '!=' ) PrimaryExpr ) . */
+struct KatovaAST *katova_parse_equality_expr(struct TargumLexer *const lexer) {
+	struct KatovaAST *primary = katova_parse_primary_expr(lexer);
+	const char *lexeme = _get_lexeme(lexer);
+	while( !strncmp(lexeme, "==", sizeof "=="-1) || !strncmp(lexeme, "!=", sizeof "!="-1) ) {
+		struct KatovaAST *logic_expr = _new_katova_node(KatovaASTBinaryExpr);
+		logic_expr->_.binary_expr.l  = primary;
+		logic_expr->_.binary_expr.op = lexeme[0];
+		targum_lexer_advance(lexer, false);
+		lexeme = _get_lexeme(lexer);
+		logic_expr->_.binary_expr.r = katova_parse_primary_expr(lexer);
+		primary = logic_expr;
+	}
+	return primary;
+}
+
+/** PrimaryExpr = Operand *( '.' identifier | '[' Expr ']' | '(' [ ExprList ] ')' ) . */
+struct KatovaAST *katova_parse_primary_expr(struct TargumLexer *const lexer) {
+	struct KatovaAST *operand = katova_parse_operand(lexer);
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	const char *lexeme = _get_lexeme(lexer);
+	while( lexeme[0]=='[' || lexeme[0]=='(' ) {
+		if( lexeme[0]=='[' ) { /// array index.
+			struct KatovaAST *use_array = _new_katova_node(KatovaASTArrayAccess);
+			use_array->_.array_access.obj = operand;
+			targum_lexer_advance(lexer, false);
+			use_array->_.array_access.expr = katova_parse_expr(lexer);
+			
+			lexeme = _get_lexeme(lexer);
+			if( lexeme[0] != ']' ) {
+				harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "expected closing ] bracket for array index.");
+				katova_free(&use_array);
+				use_array = _bad_node;
 			}
-			return opt;
+			
+			targum_lexer_advance(lexer, false);
+			lexeme = _get_lexeme(lexer);
+			if( use_array != NULL ) {
+				operand = use_array;
+			}
+		} else if( lexeme[0]=='(' ) { /// func call.
+			targum_lexer_advance(lexer, false);
+			struct KatovaAST *func_call = _new_katova_node(KatovaASTCall);
+			func_call->_.call.caller = operand;
+			lexeme = _get_lexeme(lexer);
+			if( lexeme[0] != ')' && (*token)->tag > 0 ) {
+				func_call->_.call.args = katova_parse_expr_list(lexer);
+			}
+			
+			lexeme = _get_lexeme(lexer);
+			if( lexeme[0] != ')' ) {
+				const size_t lexeme_len = targum_token_info_get_len(*token);
+				harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "syntax error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "missing ')', got '%.*s'.", ( int )(lexeme_len), lexeme);
+				katova_free(&func_call);
+				func_call = _bad_node;
+			}
+			targum_lexer_advance(lexer, false);
+			lexeme = _get_lexeme(lexer);
+			if( func_call != NULL ) {
+				operand = func_call;
+			}
 		}
-		case MetaTokenReqToken: {
-			struct MetaNode *req = metanode_new_req_token(&mlexer->lexeme);
-			metalexer_get_token(mlexer);
-			return req;
+	}
+	return operand;
+}
+
+/**
+ * Operand = int | rune | string | identifier | '(' Expr ')' .
+ */
+struct KatovaAST *katova_parse_operand(struct TargumLexer *const restrict lexer) {
+	struct TargumTokenInfo **token = &lexer->curr_tok;
+	size_t lexeme_len = targum_token_info_get_len(*token);
+	const char  *lexeme = targum_lexer_get_lexeme(lexer, *token);
+	
+	size_t choice = 5;
+	const char *keys[] = {
+		"identifier",
+		"integer",
+		"string",
+		"rune",
+	};
+	for( size_t i=0; i < (1[&keys] - &keys[0]); i++ ) {
+		const struct HarbolMap *const token_section = harbol_cfg_get_section(lexer->cfg, "tokens");
+		const intmax_t *const int_value = harbol_cfg_get_int(token_section, keys[i]);
+		if( int_value==NULL ) {
+			continue;
+		} else if( *int_value==( intmax_t )((*token)->tag) ) {
+			choice = i;
+			break;
 		}
-		case MetaTokenLexToken: {
-			struct MetaNode *lex = metanode_new_lex_token(&mlexer->lexeme);
-			metalexer_get_token(mlexer);
-			return lex;
+	}
+	switch( choice ) {
+		case 0: { /// 'identifier': IOTA
+			struct KatovaAST *const iden_node = _new_katova_node(KatovaASTIdent);
+			harbol_string_format(&iden_node->_.str, false, "%.*s", ( int )(lexeme_len), lexeme);
+			targum_lexer_advance(lexer, false);
+			return iden_node;
 		}
-		case MetaTokenRule: {
-			struct MetaNode *rule = metanode_new_rule(&mlexer->lexeme);
-			metalexer_get_token(mlexer);
-			return rule;
+		case 1: { /// 'integer': IOTA
+			struct KatovaAST *const int_node = _new_katova_node(KatovaASTIntLiteral);
+			harbol_string_format(&int_node->_.str, false, "%.*s", ( int )(lexeme_len), lexeme);
+			targum_lexer_advance(lexer, false);
+			return int_node;
 		}
-		default:
-			//harbol_warn_msg(NULL, "grammar", "critical warning", &mlexer->line, &( size_t ){ mlexer->line_start - mlexer->src }, "returning a NULL factor node in production '%s'", mlexer->key);
-			return NULL;
+		case 2: case 3: { /// 'string', 'rune': IOTA
+			struct KatovaAST *const str_node = _new_katova_node(KatovaASTStrLiteral);
+			harbol_string_format(&str_node->_.str, false, "%.*s", ( int )(lexeme_len), lexeme);
+			targum_lexer_advance(lexer, false);
+			return str_node;
+		}
+		default: {
+			if( lexeme[0]=='(' ) {
+				targum_lexer_advance(lexer, false);
+				struct KatovaAST *expr = katova_parse_expr(lexer);
+				lexeme = _get_lexeme(lexer);
+				if( lexeme[0] != ')' ) {
+					harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "Missing right parentheses ')', returning NULL expr.");
+					katova_free(&expr);
+					expr = _bad_node;
+				} else {
+					targum_lexer_advance(lexer, false);
+				}
+				return expr;
+			}
+			//lexeme_len = targum_token_info_get_len(*token);
+			//harbol_err_msg(NULL, targum_lexer_get_filename(lexer), "error", &( size_t ){(*token)->line}, &( size_t ){(*token)->col}, "Bad operand: got '%.*s'", ( int )(lexeme_len), _get_lexeme(lexer));
+			return _bad_node;
+		}
 	}
 }
 
 
-struct MetaNode *metanode_new_listexpr(struct HarbolArray *const rule_list)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode rule list expression." );
-	n->node.node_list = rule_list;
-	n->tag = MetaNodeRuleListExpr;
+struct KatovaAST *_new_katova_node(const enum KatovaASTType tag) {
+	struct KatovaAST *const n = calloc(1, sizeof *n);
+	assert( n != NULL && "bad KatovaAST." );
+	n->tag = tag;
 	return n;
 }
 
-struct MetaNode *metanode_new_opt(struct MetaNode *const expr)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode optional expression." );
-	n->node.node_expr = expr;
-	n->tag = MetaNodeOpt;
-	return n;
-}
-
-struct MetaNode *metanode_new_alt(struct MetaNode *const left, struct MetaNode *const rite)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode alternate expression." );
-	n->node.alt_expr.l = left;
-	n->node.alt_expr.r = rite;
-	n->tag = MetaNodeAlt;
-	return n;
-}
-
-struct MetaNode *metanode_new_rep_plus(struct MetaNode *const expr)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode one-or-more expression." );
-	n->node.node_expr = expr;
-	n->tag = MetaNodePlusExpr;
-	return n;
-}
-
-struct MetaNode *metanode_new_rep_star(struct MetaNode *const expr)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode zero-or-more expression." );
-	n->node.node_expr = expr;
-	n->tag = MetaNodeStarExpr;
-	return n;
-}
-
-struct MetaNode *metanode_new_pos_look(struct MetaNode *const expr)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode positive lookahead expression." );
-	n->node.node_expr = expr;
-	n->tag = MetaNodePosLook;
-	return n;
-}
-
-struct MetaNode *metanode_new_neg_look(struct MetaNode *const expr)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode negative lookahead expression." );
-	n->node.node_expr = expr;
-	n->tag = MetaNodeNegLook;
-	return n;
-}
-
-struct MetaNode *metanode_new_rule(const struct HarbolString *const rule)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode rule expression." );
-	harbol_string_copy_str(&n->node.token_expr, rule);
-	n->tag = MetaNodeRuleExprStr;
-	return n;
-}
-
-struct MetaNode *metanode_new_lex_token(const struct HarbolString *const tok)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode lexical token expression." );
-	harbol_string_copy_str(&n->node.token_expr, tok);
-	n->tag = MetaNodeLexToken;
-	return n;
-}
-
-struct MetaNode *metanode_new_req_token(const struct HarbolString *const tok)
-{
-	struct MetaNode *n = calloc(1, sizeof *n);
-	assert( n != NULL && "bad MetaNode required token expression." );
-	harbol_string_copy_str(&n->node.token_expr, tok);
-	n->tag = MetaNodeReqToken;
-	return n;
-}
-
-void metanode_free(struct MetaNode **const n, const bool follow)
-{
+TARGUM_API void katova_free(struct KatovaAST **const n) {
 	if( *n==NULL ) {
 		return;
 	}
 	switch( (*n)->tag ) {
-		case MetaNodeRuleListExpr: {
-			struct HarbolArray *nodes = (*n)->node.node_list;
-			for( size_t i=0; i < nodes->len; i++ ) {
-				struct MetaNode **p = harbol_array_get(nodes, i, sizeof *p);
-				metanode_free(p, follow);
+		case KatovaASTIdent:
+		case KatovaASTIntLiteral:
+		case KatovaASTStrLiteral:
+		case KatovaASTLoopStmt:
+			harbol_string_clear(&(*n)->_.str);
+			break;
+		case KatovaASTArrayAccess:
+			katova_free(&(*n)->_.array_access.obj);
+			katova_free(&(*n)->_.array_access.expr);
+			break;
+		case KatovaASTCall:
+			katova_free(&(*n)->_.call.caller);
+			katova_free(&(*n)->_.call.args);
+			break;
+		case KatovaASTBinaryExpr:
+			katova_free(&(*n)->_.binary_expr.l);
+			katova_free(&(*n)->_.binary_expr.r);
+			break;
+		case KatovaASTAssignStmt:
+			katova_free(&(*n)->_.assign.lhs);
+			katova_free(&(*n)->_.assign.rhs);
+			break;
+		case KatovaASTExprList:
+		case KatovaASTBlock:
+		case KatovaASTFieldList:
+		case KatovaASTTypeSpec:
+			for( size_t i=0; i < (*n)->_.list.len; i++ ) {
+				struct KatovaAST **x = harbol_array_get(&(*n)->_.list, i, sizeof *x);
+				katova_free(x);
 			}
-			harbol_array_cleanup(&(*n)->node.node_list);
+			harbol_array_clear(&(*n)->_.list);
 			break;
-		}
-		case MetaNodeAlt: {
-			metanode_free(&(*n)->node.alt_expr.l, follow);
-			metanode_free(&(*n)->node.alt_expr.r, follow);
+		case KatovaASTExprStmt:
+		case KatovaASTReturnStmt:
+			katova_free(&(*n)->_.node);
 			break;
-		}
-		case MetaNodeOpt:
-		case MetaNodePlusExpr:
-		case MetaNodeStarExpr:
-		case MetaNodePosLook:
-		case MetaNodeNegLook: {
-			metanode_free(&(*n)->node.node_expr, follow);
+		case KatovaASTIfStmt:
+			katova_free(&(*n)->_._if.init);
+			katova_free(&(*n)->_._if.cond);
+			katova_free(&(*n)->_._if.then);
+			katova_free(&(*n)->_._if._else);
 			break;
-		}
-		case MetaNodeLexToken:
-		case MetaNodeReqToken:
-		case MetaNodeRuleExprStr: {
-			harbol_string_clear(&(*n)->node.token_expr);
+		case KatovaASTForStmt:
+			katova_free(&(*n)->_._for.init);
+			katova_free(&(*n)->_._for.cond);
+			katova_free(&(*n)->_._for.post);
+			katova_free(&(*n)->_._for.body);
 			break;
-		}
-		case MetaNodeRuleExprAST: {
-			if( follow ) {
-				metanode_free(&(*n)->node.node_expr, follow);
-			} else {
-				(*n)->node.node_expr = NULL;
+		case KatovaASTMatchStmt:
+			katova_free(&(*n)->_.match.init);
+			katova_free(&(*n)->_.match.cond);
+			for( size_t i=0; i < (*n)->_.match.body.len; i++ ) {
+				struct KatovaAST **x = harbol_array_get(&(*n)->_.match.body, i, sizeof *x);
+				katova_free(x);
 			}
+			harbol_array_clear(&(*n)->_.match.body);
 			break;
-		}
-		case MetaNodeInvalid:
+		case KatovaASTCaseClause:
+			katova_free(&(*n)->_.match_case.cases);
+			katova_free(&(*n)->_.match_case.block);
+			break;
+		case KatovaASTFuncSignature:
+			katova_free(&(*n)->_.func_signature.params);
+			katova_free(&(*n)->_.func_signature.results);
+			break;
+		case KatovaASTField:
+			katova_free(&(*n)->_.field.idens);
+			katova_free(&(*n)->_.field.type);
+			break;
+		case KatovaASTRule:
+			katova_free(&(*n)->_.rule.name);
+			katova_free(&(*n)->_.rule.sig);
+			katova_free(&(*n)->_.rule.block);
+			break;
+		case KatovaASTTypeDecl:
+			katova_free(&(*n)->_.type_decl.name);
+			katova_free(&(*n)->_.type_decl.spec);
+			katova_free(&(*n)->_.type_decl.type);
+			break;
+		case KatovaASTGrammar:
+			for( size_t i=0; i < (*n)->_.grammar.types.len; i++ ) {
+				struct KatovaAST **x = harbol_array_get(&(*n)->_.grammar.types, i, sizeof *x);
+				katova_free(x);
+			}
+			harbol_array_clear(&(*n)->_.grammar.types);
+			
+			for( size_t i=0; i < (*n)->_.grammar.rules.len; i++ ) {
+				struct KatovaAST **x = harbol_array_get(&(*n)->_.grammar.rules, i, sizeof *x);
+				katova_free(x);
+			}
+			harbol_array_clear(&(*n)->_.grammar.rules);
+			break;
+		case KatovaASTInvalid:
+		default:
 			break;
 	}
-	free(*n); *n = NULL;
+	if( (*n)->tag != KatovaASTInvalid ) {
+		free(*n);
+		*n = NULL;
+	}
 }
 
-void metanode_print(const struct MetaNode *const n, const size_t tabs, FILE *const stream)
-{
-	if( n==NULL ) {
+static void _print_tabs(const size_t tabs, FILE *const stream) {
+	for( size_t i=0; i < tabs; i++ ) {
+		fprintf(stream, "  ");
+	}
+}
+
+TARGUM_API void katova_print(const struct KatovaAST *const ast, const size_t tabs, FILE *const stream) {
+	if( ast==NULL ) {
 		return;
 	}
 	_print_tabs(tabs, stream);
-	switch( n->tag ) {
-		case MetaNodeRuleListExpr: {
-			fprintf(stream, "(%p) metanode :: rule list expr\n", ( const void* )(n));
-			const struct HarbolArray *const arr = n->node.node_list;
-			for( size_t i=0; i < arr->len; i++ ) {
-				struct MetaNode **p = harbol_array_get(arr, i, sizeof *p);
-				metanode_print(*p, tabs + 1, stream);
-			}
-			break;
-		}
-		case MetaNodeAlt:
-			fprintf(stream, "(%p) metanode :: alternate expr, printing left\n", ( const void* )(n));
-			metanode_print(n->node.alt_expr.l, tabs + 1, stream);
-			_print_tabs(tabs, stream);
-			fputs("metanode :: alternate expr, printing right\n", stream);
-			metanode_print(n->node.alt_expr.r, tabs + 1, stream);
-			break;
-		case MetaNodeOpt:
-			fprintf(stream, "(%p) metanode :: optional expr\n", ( const void* )(n));
-			metanode_print(n->node.node_expr, tabs + 1, stream);
-			break;
-		case MetaNodePlusExpr:
-			fprintf(stream, "(%p) metanode :: one-or-more expr\n", ( const void* )(n));
-			metanode_print(n->node.node_expr, tabs + 1, stream);
-			break;
-		case MetaNodeStarExpr:
-			fprintf(stream, "(%p) metanode :: zero-or-more expr\n", ( const void* )(n));
-			metanode_print(n->node.node_expr, tabs + 1, stream);
-			break;
-		case MetaNodePosLook:
-			fprintf(stream, "(%p) metanode :: positive lookahead expr\n", ( const void* )(n));
-			metanode_print(n->node.node_expr, tabs + 1, stream);
-			break;
-		case MetaNodeNegLook:
-			fprintf(stream, "(%p) metanode :: negative lookahead expr\n", ( const void* )(n));
-			metanode_print(n->node.node_expr, tabs + 1, stream);
-			break;
-		case MetaNodeLexToken:
-			fprintf(stream, "(%p) metanode :: lex token expr: '%s'\n", ( const void* )(n), n->node.token_expr.cstr);
-			break;
-		case MetaNodeReqToken:
-			fprintf(stream, "(%p) metanode :: required token expr: '%s'\n", ( const void* )(n), n->node.token_expr.cstr);
-			break;
-		case MetaNodeRuleExprStr:
-			fprintf(stream, "(%p) metanode :: rule string expr: '%s'\n", ( const void* )(n), n->node.token_expr.cstr);
-			break;
-		case MetaNodeRuleExprAST:
-			fprintf(stream, "(%p) metanode :: rule node expr: '%p'\n", ( const void* )(n), ( void* )(n->node.node_expr));
-			break;
-		
-		case MetaNodeInvalid:
-		default:
-			fprintf(stream, "(%p) metanode :: invalid expr\n", ( const void* )(n));
-			break;
-	}
-}
-
-void print_rules(const struct HarbolMap *const rules, FILE *const stream) {
-	for( size_t i=0; i < rules->len; i++ ) {
-		const struct MetaNode **n = harbol_map_idx_get(rules, i);
-		const char *key = harbol_map_key_val(rules, n, sizeof n, &( size_t ){0});
-		fprintf(stream, "rule :: '%s'\n", key);
-		metanode_print(*n, 0, stream);
-	}
-}
-
-
-/// effectively transforms the ASTs into a directed (cyclical) graph.
-static void _attach_rule_metanodes(struct MetaNode *const n, const struct HarbolMap *const rules) {
-	if( n==NULL ) {
-		return;
-	}
-	switch( n->tag ) {
-		case MetaNodeRuleListExpr: {
-			const struct HarbolArray *const arr = n->node.node_list;
-			for( size_t i=0; i < arr->len; i++ ) {
-				struct MetaNode **p = harbol_array_get(arr, i, sizeof *p);
-				_attach_rule_metanodes(*p, rules);
-			}
-			break;
-		}
-		case MetaNodeAlt:
-			_attach_rule_metanodes(n->node.alt_expr.l, rules);
-			_attach_rule_metanodes(n->node.alt_expr.r, rules);
-			break;
-		
-		case MetaNodeOpt:
-		case MetaNodePlusExpr: case MetaNodeStarExpr:
-		case MetaNodePosLook:  case MetaNodeNegLook:
-			_attach_rule_metanodes(n->node.node_expr, rules);
-			break;
-		
-		case MetaNodeRuleExprStr: {
-			struct MetaNode **const rule = harbol_map_key_get(rules, n->node.token_expr.cstr, n->node.token_expr.len + 1);
-			if( rule != NULL && *rule != NULL ) {
-				harbol_string_clear(&n->node.token_expr);
-				n->node.node_expr = *rule;
-				n->tag = MetaNodeRuleExprAST;
-			} else {
-				harbol_err_msg(NULL, "grammar", "runtime error", NULL, NULL, "Undefined rule '%s'", n->node.token_expr.cstr);
-			}
-			break;
-		}
-		case MetaNodeRuleExprAST:
-		case MetaNodeLexToken: case MetaNodeReqToken:
-		case MetaNodeInvalid:  default:
-			break;
-	}
-}
-
-/// 
-static void _get_rule_deps(const struct HarbolMap *const rules, const struct HarbolMap *const deps, const struct MetaNode *n, const size_t curr_rule) {
-	if( n==NULL ) {
-		return;
-	}
-	switch( n->tag ) {
-		case MetaNodeRuleListExpr: {
-			const struct HarbolArray *const arr = n->node.node_list;
-			for( size_t i=0; i < arr->len; i++ ) {
-				const struct MetaNode **const p = harbol_array_get(arr, i, sizeof *p);
-				_get_rule_deps(rules, deps, *p, curr_rule);
-			}
-			break;
-		}
-		case MetaNodeAlt:
-			_get_rule_deps(rules, deps, n->node.alt_expr.l, curr_rule);
-			_get_rule_deps(rules, deps, n->node.alt_expr.r, curr_rule);
-			break;
-		
-		case MetaNodeOpt:
-		case MetaNodePlusExpr: case MetaNodeStarExpr:
-		case MetaNodePosLook:  case MetaNodeNegLook:
-			_get_rule_deps(rules, deps, n->node.node_expr, curr_rule);
-			break;
-		
-		case MetaNodeRuleExprAST: {
-			const struct MetaNode **const rule_ref = harbol_map_idx_get(rules, curr_rule);
-			struct HarbolMap *const restrict set = harbol_map_key_get(deps, rule_ref, sizeof *rule_ref);
-			/*{
-				const char *subkey = harbol_map_key_val(rules, rule_ref, sizeof *rule_ref, &( size_t ){0});
-				printf("\t_get_rule_deps :: rule '%s'\n", subkey);
-			}*/
-			const bool set_value = false;
-			harbol_map_key_set(set, &n->node.node_expr, sizeof n->node.node_expr, &set_value, sizeof set_value);
-			break;
-		}
-		case MetaNodeRuleExprStr:
-		case MetaNodeLexToken: case MetaNodeReqToken:
-		case MetaNodeInvalid:  default:
-			break;
-	}
-}
-
-static void _prune_unused_rules(struct HarbolMap *const rules) {
-	/** Credit to `devast8a` for algorithm.
-		seen, working = {root}, {root}
-		while working is non empty:
-			current = pop item from working
-			for every subrule directly reachable in current:
-				if subrule is not in seen:
-					add subrule to seen and to working
-	 */
-	bool throwaway = false;
-	struct HarbolMap deps = harbol_map_make(8, &throwaway);
-	for( size_t i=0; i < rules->len; i++ ) {
-		struct HarbolMap set = harbol_map_make(8, &throwaway);
-		const struct MetaNode **const rule_ref = harbol_map_idx_get(rules, i);
-		harbol_map_insert(&deps, rule_ref, sizeof *rule_ref, &set, sizeof set);
-		_get_rule_deps(rules, &deps, *rule_ref, i);
-	}
-	
-	struct HarbolMap   seen    = harbol_map_make(8, &throwaway);
-	struct HarbolArray working = harbol_array_make(sizeof(struct MetaNode*), rules->len, &throwaway);
-	const struct MetaNode **const root = harbol_map_idx_get(rules, 0);
-	harbol_map_insert(&seen, root, sizeof *root, &throwaway, sizeof throwaway);
-	harbol_array_append(&working, root, sizeof *root);
-	
-	while( !harbol_array_empty(&working) ) {
-		const struct MetaNode **const current  = harbol_array_pop(&working, sizeof *current);
-		const struct HarbolMap *const deps_set = harbol_map_key_get(&deps, current, sizeof *current);
-		for( size_t i=0; i < deps_set->len; i++ ) {
-			const struct MetaNode **const subrule = ( const struct MetaNode** )(deps_set->keys[i]);
-			if( !harbol_map_has_key(&seen, subrule, sizeof *subrule) ) {
-				harbol_map_key_set(&seen, subrule, sizeof *subrule, &throwaway, sizeof throwaway);
-				if( harbol_array_full(&working) ) {
-					harbol_array_grow(&working, sizeof(struct MetaNode*));
-				}
-				harbol_array_append(&working, subrule, sizeof *subrule);
-			}
-		}
-	}
-	harbol_array_clear(&working);
-	for( size_t i=0; i < deps.len; i++ ) {
-		struct HarbolMap *const set = harbol_map_idx_get(&deps, i);
-		harbol_map_clear(set);
-	}
-	harbol_map_clear(&deps);
-	
-	size_t deleted = 0;
-	for( size_t i = rules->len - 1; i < rules->len; i-- ) {
-		struct MetaNode **const n = harbol_map_idx_get(rules, i);
-		if( !harbol_map_has_key(&seen, n, sizeof *n) ) {
-			metanode_free(n, false);
-			harbol_map_idx_rm(rules, i);
-			i = rules->len;
-			deleted++;
-		}
-	}
-	harbol_map_clear(&seen);
-}
-
-#if 0
-static void _transform_left_recursion(struct HarbolMap *const rules) {
-	/**
-	 * anything like:
-		'expr': "<expr> '-' <term> | <term>"
-	 * has to transform into:
-		'expr': "<term> *('-' <term>)"
-	 *
-		rule -> (rule intermediate sequence) | sequence .
-		rule -> sequence *( intermediate sequence ) .
-		
-		rule -> rule sequence .
-		rule -> +sequence .
-	 */
-	( void )(rules);
-}
-#endif
-
-static bool _has_cycle(const struct MetaNode *const n, const struct MetaNode *const rule, struct HarbolMap *const seen) {
-	if( n==NULL ) {
-		return false;
-	}
-	switch( n->tag ) {
-		case MetaNodeRuleListExpr: {
-			const struct HarbolArray *const arr = n->node.node_list;
-			for( size_t i=0; i < arr->len; i++ ) {
-				const struct MetaNode **const p = harbol_array_get(arr, i, sizeof *p);
-				if( _has_cycle(*p, rule, seen) ) {
-					return true;
-				}
-			}
-			break;
-		}
-		case MetaNodeAlt: {
-			const bool l = _has_cycle(n->node.alt_expr.l, rule, seen);
-			const bool r = _has_cycle(n->node.alt_expr.r, rule, seen);
-			return l || r;
-		}
-		case MetaNodeOpt:
-		case MetaNodePlusExpr: case MetaNodeStarExpr:
-		case MetaNodePosLook:  case MetaNodeNegLook:
-			return _has_cycle(n->node.node_expr, rule, seen);
-		
-		case MetaNodeRuleExprAST: {
-			if( harbol_map_has_key(seen, &n->node.node_expr, sizeof n->node.node_expr) ) {
-				return true;
-			} else {
-				const bool throwaway = false;
-				harbol_map_insert(seen, &n->node.node_expr, sizeof n->node.node_expr, &throwaway, sizeof throwaway);
-				return _has_cycle(n->node.node_expr, n->node.node_expr, seen);
-			}
-		}
-		case MetaNodeLexToken: case MetaNodeReqToken: {
-			/// rule has a way to consume input.
-			if( harbol_map_has_key(seen, &rule, sizeof rule) ) {
-				const bool t = true;
-				harbol_map_key_set(seen, &rule, sizeof rule, &t, sizeof t);
-			}
-			return false;
-		}
-		case MetaNodeRuleExprStr:
-		case MetaNodeInvalid: default:
-			break;
-	}
-	return false;
-}
-
-static void _check_inf_loop(struct HarbolMap *const rules, bool *const restrict has_cycle, bool *const restrict consumes_input) {
-	/**
-	 * First we need to detect a cycle within the Abstract Syntax "Graph"
-	 * Then we check if any of the productions in the cycle can consume input.
-	 */
-	const struct MetaNode **const root = harbol_map_idx_get(rules, 0);
-	struct HarbolMap seen = harbol_map_make(8, &( bool ){false});
-	harbol_map_insert(&seen, root, sizeof *root, &( bool ){false}, sizeof(bool));
-	*has_cycle = _has_cycle(*root, *root, &seen);
-	for( size_t i=0; i < seen.len; i++ ) {
-		const bool *const takes_input = harbol_map_idx_get(&seen, i);
-		*consumes_input |= *takes_input;
-	}
-	harbol_map_clear(&seen);
-}
-/**************************************************************************/
-
-
-enum /** ParseFlags */ {
-	FlagAlt,  FlagOpt,
-	FlagPlus, FlagStar,
-	FlagLookAhead,
-	MaxParseFlags,
-};
-
-struct TargumParseState {
-	struct TargumParser     *parser;
-	struct HarbolMap        *rules, *token_map;
-	FILE                    *rule_trace;
-	const char              *filename;
-	const struct LexerIFace *lexer_pipe;
-	size_t                   iterations, curr_lookahead, max_iterations, tokens_consumed;
-	
-	/**
-	 * rules can nest the same grammar expression types.
-	 * example: '[ (<a> *<b>) <c> [+<d>] ]'.
-	 * Having a simple bitwise flag isn't enough in this case.
-	 * Do you toggle the bit flag after the inner or outter
-	 * optional expression fails/succeeds?
-	 */
-	uint_least16_t           flags[MaxParseFlags];
-	bool                     hit_max_recurs : 1;
-};
-
-
-static NO_NULL struct HarbolTree *_targum_parser_new_cst(const char node_cstr[static 1], const size_t cstr_len)
-{
-	const struct TargumCST cst = {
-		.parsed = dup_str(node_cstr),
-		.len    = cstr_len,
-		.tag    = SIZE_MAX
-	};
-	if( cst.parsed==NULL ) {
-		return NULL;
-	}
-	return harbol_tree_new(&cst, sizeof cst);
-}
-
-
-enum ParseRes {
-	ParseResFail, /// production failed hard.
-	ParseResOk,   /// production failed softly.
-	ParseResGood, /// production succeeded.
-};
-
-enum ParseRes _targum_parser_exec_meta_ast(
-	struct TargumParseState *const state,
-	const struct MetaNode   *const ast,
-	const struct MetaNode   *const rule,
-	struct HarbolTree       *const root
-) {
-	const struct LexerIFace *const lex = state->lexer_pipe;
-	const char *const rule_key = harbol_map_key_val(state->rules, &rule, sizeof rule, &( size_t ){0});
-	
-	if( state->rule_trace != NULL ) {
-		fprintf(state->rule_trace, "rule :: '%s', MetaAST tag: '%s', MetaAST ptr: '%p'\n", rule_key, _get_metanode(ast->tag), ( const void* )(ast));
-	}
-	
-	state->iterations++;
-	if( state->iterations > state->max_iterations ) {
-		state->iterations = state->max_iterations;
-	}
-	
-	/// `iterations` resets on every token consumption. 
-	if( state->iterations==state->max_iterations ) {
-		if( !state->hit_max_recurs ) {
-			harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "Non-deterministic recursive rule detected: '%s'", rule_key);
-			state->hit_max_recurs = true;
-		}
-		return ParseResFail;
-	}
-	
 	switch( ast->tag ) {
-		case MetaNodeInvalid: {
-			harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "Invalid MetaNode! rule: '%s' | ast: '%p'", rule_key, ( const void* )(ast));
-			return ParseResFail;
+		case KatovaASTIdent:
+			fprintf(stream, "Katova Identifier:: '%s'\n", ast->_.str.cstr);
+			break;
+		case KatovaASTIntLiteral:
+			fprintf(stream, "Katova Integer:: '%s'\n", ast->_.str.cstr);
+			break;
+		case KatovaASTStrLiteral:
+			fprintf(stream, "Katova String:: '%s'\n", ast->_.str.cstr);
+			break;
+		case KatovaASTArrayAccess:
+			fprintf(stream, "Katova Array Index::\n");
+			katova_print(ast->_.array_access.obj, tabs + 1, stream);
+			katova_print(ast->_.array_access.expr, tabs + 1, stream);
+			break;
+		case KatovaASTCall:
+			fprintf(stream, "Katova Func Call::\n");
+			katova_print(ast->_.call.caller, tabs + 1, stream);
+			katova_print(ast->_.call.args, tabs + 1, stream);
+			break;
+		case KatovaASTBinaryExpr: {
+			const char *oper = NULL;
+			switch( ast->_.binary_expr.op ) {
+				case '&': oper = "&&"; break;
+				case '|': oper = "||"; break;
+				case '=': oper = "=="; break;
+				case '!': oper = "!="; break;
+			}
+			fprintf(stream, "Katova Binary Expression:: '%s'\n", oper);
+			katova_print(ast->_.binary_expr.l, tabs + 1, stream);
+			katova_print(ast->_.binary_expr.r, tabs + 1, stream);
+			break;
 		}
-		case MetaNodeRuleListExpr: {
-			/// Returns result as it is.
-			const struct HarbolArray *const rule_list = ast->node.node_list;
-			if( rule_list==NULL || rule_list->len==0 ) {
-				harbol_warn_msg(NULL, state->filename, "runtime warning", NULL, NULL, "rule sequence node for rule '%s' has bad node list.", rule_key);
-				return ParseResOk;
+		case KatovaASTAssignStmt: {
+			const char *oper = NULL;
+			switch( ast->_.assign.op ) {
+				case '+': oper = "+="; break;
+				case ':': oper = ":="; break;
+				case 0:   oper = "=";  break;
 			}
-			
-			enum ParseRes res = ParseResFail;
-			for( size_t i=0; i < rule_list->len; i++ ) {
-				const struct MetaNode **const node = harbol_array_get(rule_list, i, sizeof *node);
-				if( (res = _targum_parser_exec_meta_ast(state, *node, rule, root))==ParseResFail ) {
-					break;
-				}
-			}
-			return res;
+			fprintf(stream, "Katova Assign Stmt:: lhs\n");
+			katova_print(ast->_.assign.lhs, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Assign Stmt:: '%s'\n", oper);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Assign Stmt:: rhs list\n");
+			katova_print(ast->_.assign.rhs, tabs + 1, stream);
+			break;
 		}
-		case MetaNodeOpt: {
-			/// On failure, optional expressions must backtrack the lexer
-			/// and remove any parsed CSTs but returns success.
-			const size_t saved_lookahead   = state->curr_lookahead;
-			const size_t saved_token_count = state->tokens_consumed;
-			const size_t kids = root->kids.len;
-			
-			state->flags[FlagOpt]++;
-			const enum ParseRes res = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
-			state->flags[FlagOpt]--;
-			/// if we failed BUT the optional consumed tokens, fail hard.
-			if( res==ParseResFail ) {
-				if( state->tokens_consumed > saved_token_count ) {
-					harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "optional expression in rule '%s' passed then failed to complete.", rule_key);
-					return res;
-				} else if( state->curr_lookahead > saved_lookahead ) {
-					const size_t child_count = root->kids.len;
-					if( child_count > kids ) {
-						for( size_t i=0; i < (child_count - kids); i++ ) {
-							const size_t idx = root->kids.len - 1;
-							struct HarbolTree *const cst_node = harbol_tree_get_node_by_index(root, idx);
-							struct TargumCST *const cst = harbol_tree_get(cst_node);
-							free(cst->parsed); cst->parsed = NULL;
-							harbol_tree_rm_index(root, idx);
-						}
-					}
-					state->curr_lookahead = saved_lookahead;
-				}
+		case KatovaASTExprList:
+			fprintf(stream, "Katova Expr List::\n");
+			for( size_t i=0; i < ast->_.list.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.list, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			return ParseResGood;
-		}
-		case MetaNodeAlt: {
-			/// On failure, alt expressions must backtrack the lexer
-			/// remove any parsed CSTs, then try the rightward node.
-			/// returns result as is.
-			const size_t saved_lookahead   = state->curr_lookahead;
-			const size_t saved_token_count = state->tokens_consumed;
-			const size_t kids = root->kids.len;
-			
-			state->flags[FlagAlt]++;
-			const enum ParseRes result = _targum_parser_exec_meta_ast(state, ast->node.alt_expr.l, rule, root);
-			state->flags[FlagAlt]--;
-			if( result > ParseResFail ) {
-				return result;
-			} else {
-				if( state->curr_lookahead > saved_lookahead ) {
-					const size_t child_count = root->kids.len;
-					if( child_count > kids ) {
-						for( size_t i=0; i < (child_count - kids); i++ ) {
-							const size_t idx = root->kids.len - 1;
-							struct HarbolTree *const cst_node = harbol_tree_get_node_by_index(root, idx);
-							struct TargumCST *const cst = harbol_tree_get(cst_node);
-							free(cst->parsed); cst->parsed = NULL;
-							harbol_tree_rm_index(root, idx);
-						}
-					}
-				}
-				state->curr_lookahead  = saved_lookahead;
-				state->tokens_consumed = saved_token_count;
-				return _targum_parser_exec_meta_ast(state, ast->node.alt_expr.r, rule, root);
+			break;
+		case KatovaASTExprStmt:
+			fprintf(stream, "Katova Expr Stmt::\n");
+			katova_print(ast->_.node, tabs + 1, stream);
+			break;
+		case KatovaASTReturnStmt:
+			fprintf(stream, "Katova Return Stmt::\n");
+			katova_print(ast->_.node, tabs + 1, stream);
+			break;
+		case KatovaASTIfStmt:
+			fprintf(stream, "Katova If Stmt:: Init\n");
+			katova_print(ast->_._if.init, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova If Stmt:: Cond\n");
+			katova_print(ast->_._if.cond, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova If Stmt:: Block\n");
+			katova_print(ast->_._if.then, tabs + 1, stream);
+			if( ast->_._if._else != NULL ) {
+				_print_tabs(tabs, stream);
+				fprintf(stream, "Katova If Stmt:: Else\n");
+				katova_print(ast->_._if._else, tabs + 1, stream);
 			}
-		}
-		
-		case MetaNodePlusExpr: {
-			/// returns success if at least one expression returned success.
-			enum ParseRes res = ParseResFail;
-			state->flags[FlagPlus]++;
-			while( _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root)==ParseResGood ) {
-				res = ParseResGood;
+			break;
+		case KatovaASTBlock:
+			fprintf(stream, "Katova Block::\n");
+			for( size_t i=0; i < ast->_.list.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.list, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			state->flags[FlagPlus]--;
-			return res;
-		}
-		case MetaNodeStarExpr: {
-			/// always returns success.
-			state->flags[FlagStar]++;
-			while( _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root)==ParseResGood );
-			state->flags[FlagStar]--;
-			return ParseResGood;
-		}
-		
-		case MetaNodePosLook: {
-			state->flags[FlagLookAhead]++;
-			const enum ParseRes result = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
-			state->curr_lookahead = 0;
-			state->flags[FlagLookAhead]--;
-			return result;
-		}
-		case MetaNodeNegLook: {
-			state->flags[FlagLookAhead]++;
-			const enum ParseRes result = _targum_parser_exec_meta_ast(state, ast->node.node_expr, rule, root);
-			state->curr_lookahead = 0;
-			state->flags[FlagLookAhead]--;
-			return !result;
-		}
-		
-		case MetaNodeLexToken: {
-			const struct HarbolString *const lit_str = &ast->node.token_expr;
-			const uint32_t *const lex_tok_val = harbol_map_key_get(state->token_map, lit_str->cstr, lit_str->len+1);
-			if( lex_tok_val==NULL ) {
-				harbol_err_msg(NULL, state->filename, "runtime error", NULL, NULL, "Undefined token type '%s' in rule '%s'", lit_str->cstr, rule_key);
-				return ParseResFail;
+			break;
+		case KatovaASTForStmt:
+			fprintf(stream, "Katova For Stmt:: Init\n");
+			katova_print(ast->_._for.init, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova For Stmt:: Cond\n");
+			katova_print(ast->_._for.cond, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova For Stmt:: Post\n");
+			katova_print(ast->_._for.post, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova For Stmt:: Body\n");
+			katova_print(ast->_._for.body, tabs + 1, stream);
+			break;
+		case KatovaASTLoopStmt:
+			fprintf(stream, "Katova Loop Stmt:: '%s'\n", ast->_.str.cstr);
+			break;
+		case KatovaASTMatchStmt:
+			fprintf(stream, "Katova Match Stmt:: Init\n");
+			katova_print(ast->_.match.init, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Match Stmt:: Cond\n");
+			katova_print(ast->_.match.cond, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Match Stmt:: Body\n");
+			for( size_t i=0; i < ast->_.match.body.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.match.body, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			
-			size_t
-				line = 0
-			  , col  = 0
-			;
-			const uint32_t tok_val = (*lex->tok_fn)(lex->userdata, state->curr_lookahead, &line, &col);
-			struct {
-				const char *str;
-				size_t      len;
-			} tok = {0};
-			tok.str = (*lex->lexeme_fn)(lex->userdata, state->curr_lookahead, &line, &col, &tok.len);
-			if( tok_val==0 ) {
-				/// got invalid/EOF token?
-				return ParseResFail;
-			} else if( *lex_tok_val != tok_val ) {
-				if( !state->flags[FlagPlus] && !state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagLookAhead] ) {
-					harbol_err_msg(NULL, state->filename, "syntax error", &line, &col, "Expected '%s' but got '%.*s'", lit_str->cstr, ( int )(tok.len), tok.str);
-				}
-				return ParseResFail;
+			break;
+		case KatovaASTCaseClause:
+			fprintf(stream, "Katova Case Clauses:: Cases\n");
+			katova_print(ast->_.match_case.cases, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Case Clauses:: Blocks\n");
+			katova_print(ast->_.match_case.block, tabs + 1, stream);
+			break;
+		case KatovaASTFuncSignature:
+			fprintf(stream, "Katova Func Signature:: Params\n");
+			katova_print(ast->_.func_signature.params, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Func Signature:: Results\n");
+			katova_print(ast->_.func_signature.results, tabs + 1, stream);
+			break;
+		case KatovaASTFieldList:
+			fprintf(stream, "Katova Field List::\n");
+			for( size_t i=0; i < ast->_.list.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.list, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			
-			/// we're not in the look-ahead expressions, consume the token!
-			const bool consume = !state->flags[FlagLookAhead];
-			if( consume ) {
-				state->iterations = 0;
-				struct TargumCST cst = {
-					.parsed = calloc(tok.len + 1, sizeof(char)),
-					.len    = tok.len,
-					.tag    = tok_val
-				};
-				if( cst.parsed==NULL ) {
-					harbol_err_msg(NULL, state->filename, "memory error", &line, &col, "Unable to allocate CST Node for lexical token!");
-					return ParseResFail;
-				}
-				strncpy(cst.parsed, tok.str, tok.len);
-				cst.parsed[tok.len] = 0;
-				harbol_tree_insert_val(root, &cst, sizeof cst);
-				state->tokens_consumed++;
-			} else {
-				state->curr_lookahead++;
+			break;
+		case KatovaASTField:
+			fprintf(stream, "Katova Field:: Idens\n");
+			katova_print(ast->_.field.idens, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Field:: Type\n");
+			katova_print(ast->_.field.type, tabs + 1, stream);
+			break;
+		case KatovaASTRule:
+			fprintf(stream, "Katova Rule:: Name\n");
+			katova_print(ast->_.rule.name, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Rule:: Signature\n");
+			katova_print(ast->_.rule.sig, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Rule:: Body\n");
+			katova_print(ast->_.rule.block, tabs + 1, stream);
+			break;
+		case KatovaASTTypeDecl:
+			fprintf(stream, "Katova Type Decl:: Name\n");
+			katova_print(ast->_.type_decl.name, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Type Decl:: Type Name\n");
+			katova_print(ast->_.type_decl.type, tabs + 1, stream);
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Rule:: Is Alias? '%s'\n", ast->_.type_decl.is_alias? "yes" : "no");
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Type Decl:: Type Spec\n");
+			katova_print(ast->_.type_decl.spec, tabs + 1, stream);
+			break;
+		case KatovaASTTypeSpec:
+			fprintf(stream, "Katova Type Spec::\n");
+			for( size_t i=0; i < ast->_.list.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.list, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			(*lex->consume_fn)(lex->userdata, state->curr_lookahead, consume);
-			return ParseResGood;
-		}
-		case MetaNodeReqToken: {
-			const struct HarbolString *const lit_str = &ast->node.token_expr;
-			size_t
-				line = 0
-			  , col  = 0
-			;
-			const uint32_t tok_val = (*lex->tok_fn)(lex->userdata, state->curr_lookahead, &line, &col);
-
-			struct {
-				const char *str;
-				size_t      len;
-			} tok = {0};
-			tok.str = (*lex->lexeme_fn)(lex->userdata, state->curr_lookahead, &line, &col, &tok.len);
-			if( tok_val==0 || strncmp(lit_str->cstr, tok.str, tok.len) ) {
-				if( /*!state->flags[FlagPlus] && */!state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagLookAhead] ) {
-					harbol_err_msg(NULL, state->filename, "syntax error", &line, &col, "Expected '%s' but got '%.*s'", lit_str->cstr, ( int )(tok.len), tok.str);
-				}
-				return ParseResFail;
+			break;
+		case KatovaASTGrammar:
+			fprintf(stream, "Katova Grammar:: Type Decls\n");
+			for( size_t i=0; i < ast->_.grammar.types.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.grammar.types, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			const bool consume = !state->flags[FlagLookAhead];
-			if( consume ) {
-				state->iterations = 0;
-				struct TargumCST cst = {
-					.parsed = calloc(tok.len + 1, sizeof(char)),
-					.len    = tok.len,
-					.tag    = tok_val
-				};
-				if( cst.parsed==NULL ) {
-					harbol_err_msg(NULL, state->filename, "memory error", &line, &col, "Unable to allocate CST Node for required token!");
-					return ParseResFail;
-				}
-				strncpy(cst.parsed, tok.str, tok.len);
-				cst.parsed[tok.len] = 0;
-				harbol_tree_insert_val(root, &cst, sizeof cst);
-				state->tokens_consumed++;
-			} else {
-				state->curr_lookahead++;
+			_print_tabs(tabs, stream); fprintf(stream, "Katova Grammar:: Rules\n");
+			for( size_t i=0; i < ast->_.grammar.rules.len; i++ ) {
+				const struct KatovaAST **x = harbol_array_get(&ast->_.grammar.rules, i, sizeof *x);
+				katova_print(*x, tabs + 1, stream);
 			}
-			(*lex->consume_fn)(lex->userdata, state->curr_lookahead, consume);
-			return ParseResGood;
-		}
-		
-		case MetaNodeRuleExprAST: {
-			const struct MetaNode *const subrule = ast->node.node_expr;
-			size_t key_len = 0;
-			const char *const subrule_key = harbol_map_key_val(state->rules, &subrule, sizeof subrule, &key_len);
-			struct HarbolTree *subchild = _targum_parser_new_cst(subrule_key, key_len);
-			if( subchild==NULL ) {
-				if( !state->flags[FlagPlus] && !state->flags[FlagStar] && !state->flags[FlagAlt] && !state->flags[FlagOpt] && !state->flags[FlagLookAhead] ) {
-					harbol_err_msg(NULL, state->filename, "memory error", NULL, NULL, "Failed to allocate tree for rule '%s'", subrule_key);
-				}
-				return ParseResFail;
-			}
-			
-			enum ParseRes result = _targum_parser_exec_meta_ast(state, subrule, subrule, subchild);
-			if( result==ParseResFail ) {
-				targum_parser_free_cst(&subchild);
-			} else if( subchild->kids.len==0 ) {
-				if( state->parser->warns ) {
-					harbol_warn_msg(NULL, state->filename, "runtime warning", NULL, NULL, "rule '%s' produced no node(s).", subrule_key);
-				}
-				targum_parser_free_cst(&subchild);
-				return ParseResOk;
-			}
-			if( subchild != NULL ) {
-				harbol_tree_insert_node(root, &subchild);
-			}
-			return result;
-		}
-		
-		default: {
-			return ParseResFail;
-		}
+			break;
+		case KatovaASTInvalid:
+		default:
+			break;
 	}
 }
 
-
-
-TARGUM_API struct TargumParser targum_parser_make(
-	LexerStartUpFunc *const startup_func,
-	LexerShutDwnFunc *const shutdown_func,
-	TokenFunc        *const token_func,
-	LexemeFunc       *const lexeme_func,
-	ConsumeFunc      *const consume_func,
-	void             *const userdata,
-	const size_t            userdata_len,
-	const char              filename[static 1],
-	struct HarbolMap *const cfg
-) {
-	return ( struct TargumParser ){
-		.lexer_iface.startup_fn  = startup_func,
-		.lexer_iface.shutdown_fn = shutdown_func,
-		.lexer_iface.tok_fn      = token_func,
-		.lexer_iface.lexeme_fn   = lexeme_func,
-		.lexer_iface.consume_fn  = consume_func,
-		.lexer_iface.userdata    = userdata,
-		.lexer_iface.len_data    = userdata_len,
-		.filename                = filename,
-		.cfg                     = cfg,
-	};
-}
-
-TARGUM_API bool targum_parser_init(struct TargumParser *const parser) {
-	if( parser->lexer_iface.startup_fn==NULL ) {
-		harbol_err_msg(NULL, parser->filename, "system error", NULL, NULL, "No lexer startup function loaded.");
-		return false;
-	} else if( !(*parser->lexer_iface.startup_fn)(parser->lexer_iface.userdata, parser->filename) ) {
-		harbol_err_msg(NULL, parser->filename, "lexer error", NULL, NULL, "Lexer failed to start up. Check lexer and lexer interface.");
-		if( parser->lexer_iface.shutdown_fn != NULL ) {
-			(*parser->lexer_iface.shutdown_fn)(parser->lexer_iface.userdata, parser->filename);
-		}
-		return false;
-	}
-	return harbol_map_init(&parser->token_lits, 8);
-}
-
-TARGUM_API void targum_parser_clear(struct TargumParser *const parser, const bool free_config) {
-	harbol_map_clear(&parser->token_lits);
-	parser->filename = parser->cfg_file = NULL;
-	if( free_config ) {
-		harbol_cfg_free(&parser->cfg);
-	}
-	parser->lexer_iface.startup_fn  = NULL;
-	parser->lexer_iface.shutdown_fn = NULL;
-	parser->lexer_iface.consume_fn  = NULL;
-	parser->lexer_iface.lexeme_fn   = NULL;
-	parser->lexer_iface.tok_fn      = NULL;
-	parser->lexer_iface.userdata    = NULL;
-}
-
-
-TARGUM_API bool targum_parser_define_token(struct TargumParser *const restrict parser, const char token_name[static 1], const uint32_t tok_value) {
-	const size_t token_name_len = strlen(token_name);
-	return harbol_map_insert(&parser->token_lits, token_name, token_name_len+1, &tok_value, sizeof tok_value);
-}
-
-
-TARGUM_API bool targum_parser_load_cfg_file(struct TargumParser *const restrict parser, const char cfg_file[static 1]) {
-	parser->cfg = harbol_cfg_parse_file(cfg_file);
-	if( parser->cfg != NULL ) {
-		parser->cfg_file = cfg_file;
-		return true;
-	}
-	return false;
-}
-TARGUM_API bool targum_parser_load_cfg_cstr(struct TargumParser *const restrict parser, const char cfg_cstr[static 1]) {
-	parser->cfg = harbol_cfg_parse_cstr(cfg_cstr);
-	if( parser->cfg != NULL ) {
-		parser->cfg_file = "user-defined";
-		return true;
-	}
-	return false;
-}
-
-TARGUM_API struct HarbolMap *targum_parser_get_cfg(const struct TargumParser *const parser) {
-	return parser->cfg;
-}
-
-TARGUM_API const char *targum_parser_get_cfg_filename(const struct TargumParser *const parser) {
-	return parser->cfg_file;
-}
-
-
-TARGUM_API struct HarbolTree *targum_parser_run(struct TargumParser *const parser)
-{
-	struct HarbolTree *root = NULL;
-	if( parser->filename==NULL ) {
-		harbol_err_msg(NULL, NULL, "system error", NULL, NULL, "No file name given.");
-		return root;
-	} else if( parser->cfg==NULL ) {
-		harbol_err_msg(NULL, parser->filename, "system error", NULL, NULL, "No grammar config loaded.");
-		return root;
-	} else if( parser->lexer_iface.lexeme_fn==NULL || parser->lexer_iface.tok_fn==NULL || parser->lexer_iface.consume_fn==NULL ) {
-		harbol_err_msg(NULL, parser->filename, "system error", NULL, NULL, "No lexer token functions loaded.");
-		return root;
-	}
-	
-	const struct HarbolMap *const grammar = harbol_cfg_get_section(parser->cfg, "grammar");
-	if( grammar==NULL ) {
-		harbol_err_msg(NULL, parser->filename, "system error", NULL, NULL, "Missing grammar section in config file '%s'.", parser->cfg_file);
-		return root;
-	} else if( grammar->len==0 ) {
-		harbol_err_msg(NULL, parser->filename, "system error", NULL, NULL, "No grammar defined config file '%s'.", parser->cfg_file);
-		return root;
-	}
-	
-	/// get parser settings.
-	{
-		const bool *const warnings = harbol_cfg_get_bool(parser->cfg, "settings.warnings");
-		if( warnings != NULL ) {
-			parser->warns = *warnings;
-		} else {
-			harbol_warn_msg(NULL, parser->filename, "system warning", NULL, NULL, "'warnings' key missing in parser settings section, defaulting to warnings disabled.");
-		}
-	}
-	
-	struct HarbolMap rules_cache = harbol_map_make(8, &( bool ){false});
-	for( size_t i=0; i < grammar->len; i++ ) {
-		const struct HarbolVariant *const v   =  ( const struct HarbolVariant* )(grammar->datum[i]);
-		const char                 *const key =  ( const char* )(grammar->keys[i]);
-		const struct HarbolString  *const str = *( const struct HarbolString *const * )(v->data);
-		struct MetaLexer ml = { {0}, str->cstr, str->cstr, str->cstr, key, 1, 0, MetaTokenInvalid };
-		struct MetaNode *rules = metaparser_parse_rule(&ml);
-		harbol_map_insert(&rules_cache, key, grammar->keylens[i], &rules, sizeof rules);
-		harbol_string_clear(&ml.lexeme);
-	}
-	
-	//print_rules(&rules_cache, stdout);
-	
-	/// form the individual ASTs into a directed, cyclic graph.
-	for( size_t i=0; i < rules_cache.len; i++ ) {
-		struct MetaNode **const n = harbol_map_idx_get(&rules_cache, i);
-		_attach_rule_metanodes(*n, &rules_cache);
-	}
-	
-	/// reduce memory usage and less rules to mess around with.
-	_prune_unused_rules(&rules_cache);
-	
-	/// Check if there's an infinite loop and if input is consumed.
-	bool
-		has_cycle      = false
-	  , consumes_input = false
-	;
-	_check_inf_loop(&rules_cache, &has_cycle, &consumes_input);
-	
-	if( has_cycle && !consumes_input ) {
-		struct HarbolString rule_strs = {0};
-		for( size_t i=0; i < rules_cache.len; i++ ) {
-			harbol_string_add_cstr(&rule_strs, ( const char* )(rules_cache.keys[i]));
-			if( i+1 != rules_cache.len ) {
-				harbol_string_add_cstr(&rule_strs, ", ");
-			}
-		}
-		harbol_err_msg(NULL, parser->filename, "parse error", NULL, NULL, "detected deterministic recursion in grammar rules: '%s'.", rule_strs.cstr);
-		harbol_string_clear(&rule_strs);
-		goto parser_cleanup;
-	}
-	
-	/// Finally interpret our MetaAST
-	
-	size_t max_iters = 5000;
-	{
-		const uintmax_t *const recursion_threshold = ( const uintmax_t* )(harbol_cfg_get_int(parser->cfg, "settings.recursion threshold"));
-		if( recursion_threshold != NULL ) {
-			max_iters = ( size_t )(*recursion_threshold);
-		} else {
-			harbol_warn_msg(NULL, parser->filename, "system warning", NULL, NULL, "'recursion threshold' key missing in parser settings section, defaulting to 5000 iterations.");
-		}
-	}
-	
-	bool trace_rules = false;
-	{
-		const bool *const _trace_rules = harbol_cfg_get_bool(parser->cfg, "settings.rule tracing");
-		if( _trace_rules != NULL ) {
-			trace_rules = *_trace_rules;
-		} else {
-			harbol_warn_msg(NULL, parser->filename, "system warning", NULL, NULL, "'rule tracing' key missing in parser settings section, defaulting to rule tracing disabled.");
-		}
-	}
-	
-	bool print_rule_tree = false;
-	{
-		const bool *const _print_rules = harbol_cfg_get_bool(parser->cfg, "settings.print rule tree");
-		if( _print_rules != NULL ) {
-			print_rule_tree = *_print_rules;
-		} else {
-			harbol_warn_msg(NULL, parser->filename, "system warning", NULL, NULL, "'print rule tree' key missing in parser settings section, defaulting to rule printing disabled.");
-		}
-	}
-	
-	struct TargumParseState state = {
-		.parser         =  parser,
-		.rules          = &rules_cache,
-		.token_map      = &parser->token_lits,
-		.filename       =  parser->filename,
-		.lexer_pipe     = &parser->lexer_iface,
-		.max_iterations =  max_iters,
-		.rule_trace     = (trace_rules)? fopen("targum_parser_rule_tracing.txt", "w") : NULL
-	};
-	const struct MetaNode **const ast = harbol_map_idx_get(state.rules, 0);
-	if( ast==NULL || *ast==NULL ) {
-		harbol_err_msg(NULL, state.filename, "runtime error", NULL, NULL, "starter rule '%s' gave bad metanode!", ( const char* )(rules_cache.keys[0]));
-		goto parser_cleanup;
-	}
-	
-	root = _targum_parser_new_cst(( const char* )(state.rules->keys[0]), state.rules->keylens[0]);
-	const enum ParseRes parse_res = _targum_parser_exec_meta_ast(&state, *ast, *ast, root);
-	if( state.rule_trace != NULL ) {
-		const char *str_parse_res = NULL;
-		switch( parse_res ) {
-			case ParseResFail: str_parse_res = "Fail";    break;
-			case ParseResGood: str_parse_res = "Success"; break;
-			case ParseResOk:   str_parse_res = "Ok";      break;
-		}
-		fprintf(state.rule_trace, "final parse result :: '%s'", str_parse_res);
-		fclose(state.rule_trace); state.rule_trace = NULL;
-	}
-	
-	if( print_rule_tree ) {
-		FILE *rule_tree = fopen("targum_parser_rule_tree.txt", "w");
-		for( size_t i=0; i < rules_cache.len; i++ ) {
-			const char *key_name = ( const char* )(rules_cache.keys[i]);
-			const struct MetaNode **const n = harbol_map_idx_get(&rules_cache, i);
-			fprintf(rule_tree, "\nprinting MetaAST '%s' (%p):\n", key_name, ( const void* )(*n));
-			metanode_print(*n, 0, rule_tree);
-		}
-		fclose(rule_tree); rule_tree = NULL;
-	}
-	
-	if( parse_res==ParseResFail || root->kids.len==0 ) {
-		if( parser->warns ) {
-			const char *warn_msg = ( parse_res==ParseResFail )? "starting rule '%s' failed parsing." : "starter rule '%s' produced no parse tree nodes. freeing...";
-			harbol_warn_msg(NULL, parser->filename, "runtime warning", NULL, NULL, warn_msg, ( const char* )(rules_cache.keys[0]));
-		}
-		targum_parser_free_cst(&root);
-		goto parser_cleanup;
-	}
-	
-	size_t line = 0, col = 0;
-	const uint32_t token_val = (*parser->lexer_iface.tok_fn)(parser->lexer_iface.userdata, 0, &line, &col);
-	if( token_val != 0 ) {
-		size_t len = 0;
-		const char *tok_str = (*parser->lexer_iface.lexeme_fn)(parser->lexer_iface.userdata, 0, &line, &col, &len);
-		harbol_err_msg(NULL, parser->filename, "parse error", NULL, NULL, "unparsed, leftover tokens remaining '%.*s' at line: '%zu', col: '%zu', freeing parse tree nodes...", ( int )(len), tok_str, line, col);
-		targum_parser_free_cst(&root);
-	}
-	
-	
-parser_cleanup:
-	for( size_t i=0; i < rules_cache.len; i++ ) {
-		struct MetaNode **const n = harbol_map_idx_get(&rules_cache, i);
-		metanode_free(n, false);
-	}
-	harbol_map_clear(&rules_cache);
-	
-	if( parser->lexer_iface.shutdown_fn != NULL ) {
-		(*parser->lexer_iface.shutdown_fn)(parser->lexer_iface.userdata, parser->filename);
-	}
-	return root;
-}
-
-TARGUM_API void targum_parser_clear_cst(struct HarbolTree *const cst) {
-	struct TargumCST *const first_cst = ( struct TargumCST* )(cst->data);
-	free(first_cst->parsed); first_cst->parsed = NULL;
-	for( size_t i=0; i < cst->kids.len; i++ ) {
-		struct HarbolTree *kid = harbol_tree_get_node_by_index(cst, i);
-		targum_parser_clear_cst(kid);
-	}
-}
-
-TARGUM_API void targum_parser_free_cst(struct HarbolTree **const cst_ref) {
-	if( *cst_ref==NULL )
-		return;
-	
-	targum_parser_clear_cst(*cst_ref);
-	harbol_tree_free(cst_ref);
+TARGUM_API struct KatovaAST *katova_parse(struct TargumLexer *const lexer) {
+	targum_lexer_get_token(lexer);
+	return katova_parse_grammar(lexer);
 }

@@ -1,0 +1,41 @@
+type Stmt Node
+type badStmt = Node
+type Expr Node {
+	a,b int
+}
+
+type ExprList = Node {
+	a,b,c int
+}
+
+/// exprList = expr *(',' expr)
+rule expr_list() Node {
+	n := new(Node)
+	n += expr()
+	for token==',' {
+		advance()
+		n += expr()
+	}
+	return n
+}
+
+/// term = identifier | integer | float | string | rune | '(' expr ')' .
+rule term() Node {
+	n := new(Node)
+	match token {
+		ident, int, float, string, rune {
+			n = to_node(token) /// copies token data to the node.
+			advance()
+		}
+		'(' {
+			advance()
+			n = expr()
+			expect(')')
+		}
+		_ {
+			error()
+			n = nil
+		}
+	}
+	return n
+}

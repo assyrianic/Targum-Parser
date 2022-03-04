@@ -45,6 +45,7 @@ debug:
 
 test:
 	$(CC) $(TFLAGS) test_driver.c -L. -l$(LIB_NAME) -o test_driver -ldl -Wl,--export-dynamic
+
 test_targum:
 	$(CC) $(TFLAGS) test_driver.c -L. -ltargum_lexer -l$(LIB_NAME) -o test_driver -ldl -Wl,--export-dynamic
 

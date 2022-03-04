@@ -1,4 +1,0 @@
-MAIN
-X = X + 9;
-OUTPUT X
-1 2 3
